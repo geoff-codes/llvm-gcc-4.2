@@ -213,6 +213,10 @@ bool isSequentialCompatible(tree_node *type);
 /// corresponds to an LLVM array type.
 bool isArrayCompatible(tree_node *type);
 
+/// arrayLength - Return a tree expressing the number of elements in an array
+/// of the specified type, or NULL if the type does not specify the length.
+tree_node *arrayLength(tree_node *type);
+
 /// ValidateRegisterVariable - Check that a static "asm" variable is
 /// well-formed.  If not, emit error messages and return true.  If so, return
 /// false.
@@ -431,9 +435,7 @@ private:
   
   /// EmitAnnotateIntrinsic - Emits call to annotate attr intrinsic
   void EmitAnnotateIntrinsic(Value *V, tree_node *decl);
-
-  /// EmitTypeGcroot - Emits call to make type a gcroot
-  void EmitTypeGcroot(Value *V, tree_node *decl);
+  
 private:
 
   // Emit* - These are delegates from Emit, and have the same parameter
@@ -500,7 +502,7 @@ private:
   Value *EmitBuiltinUnaryFPOp(Value *Amt, Intrinsic::ID F32ID,
                               Intrinsic::ID F64ID);
   Value *EmitBuiltinUnaryFPOp(Value *InVal, const char *F32Name,
-                              const char *F64Name, const char *LongDoubleName);
+                              const char *F64Name);
   Value *EmitBuiltinPOWI(tree_node *exp);
 
   bool EmitBuiltinConstantP(tree_node *exp, Value *&Result);

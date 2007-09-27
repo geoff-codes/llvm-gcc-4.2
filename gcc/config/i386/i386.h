@@ -565,7 +565,13 @@ extern const char *host_detect_local_cpu (int argc, const char **argv);
 
 /* target machine storage layout */
 
+/* LLVM LOCAL begin */
+#if defined(ENABLE_LLVM) || defined(__llvm__)
+#define LONG_DOUBLE_TYPE_SIZE 64
+#else
 #define LONG_DOUBLE_TYPE_SIZE 80
+#endif
+/* LLVM LOCAL end */
 
 /* Set the value of FLT_EVAL_METHOD in float.h.  When using only the
    FPU, assume that the fpcw is set to extended precision; when using

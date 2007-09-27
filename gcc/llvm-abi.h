@@ -110,8 +110,10 @@ static tree isSingleElementStructOrArray(tree type) {
       }
     return FoundField ? isSingleElementStructOrArray(FoundField) : 0;
   case ARRAY_TYPE:
-    const ArrayType *Ty = dyn_cast<ArrayType>(ConvertType(type));
-    if (!Ty || Ty->getNumElements() != 1)
+    if (!isArrayCompatible(type))
+      return 0;
+    tree length = arrayLength(type);
+    if (!length || !integer_onep(length))
       return 0;
     return isSingleElementStructOrArray(TREE_TYPE(type));
   }
