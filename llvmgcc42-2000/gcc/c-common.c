@@ -7574,7 +7574,7 @@ iasm_stmt (tree expr, tree args, int lineno)
       clobbers = tree_cons (NULL_TREE,
 			    build_string (3, "eax"),
 			    clobbers);
-      if (!flag_pic)
+      if (MACHO_DYNAMIC_NO_PIC_P)
 	clobbers = tree_cons (NULL_TREE,
 			      build_string (3, "ebx"),
 			      clobbers);
