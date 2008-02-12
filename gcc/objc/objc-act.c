@@ -9339,16 +9339,11 @@ generate_protocols (void)
 					     UOBJC_PROTOCOL_EXT_decl, NULL_TREE);
       /* APPLE LOCAL end radar 4585769 - Objective-C 1.0 extensions */
       /* LLVM LOCAL begin */
-#ifdef ENABLE_LLVM
       /* Force 4 byte alignment for protocols */
       DECL_ALIGN(decl) = 32;
       DECL_USER_ALIGN(decl) = 1;
-      finish_var_decl (decl, initlist);
-      /* At -O0, we may have emitted references to the decl earlier. */
-      if (!optimize)
-        reset_initializer_llvm(decl);
-#endif
       /* LLVM LOCAL end */
+      finish_var_decl (decl, initlist);
     }
 }
 
@@ -10461,8 +10456,6 @@ build_v2_ivar_list_initializer (tree class_name, tree type, tree field_decl)
 {
   tree initlist = NULL_TREE;
   int val;
-  /* LLVM LOCAL make sizes add up right */
-  int skipped = 0;
 
   do {
     tree ivar = NULL_TREE;
@@ -10470,12 +10463,8 @@ build_v2_ivar_list_initializer (tree class_name, tree type, tree field_decl)
     /* Unnamed bitfields are ignored. */
     if (!DECL_NAME (field_decl))
       {
-        /* LLVM LOCAL begin make sizes add up right */
-        do {
+        do
           field_decl = TREE_CHAIN (field_decl);
-          skipped++;
-        }
-        /* LLVM LOCAL end */
         while (field_decl && TREE_CODE (field_decl) != FIELD_DECL);
         continue;
       }
@@ -10533,26 +10522,6 @@ build_v2_ivar_list_initializer (tree class_name, tree type, tree field_decl)
   }
   while (field_decl);
 
-#ifndef OBJCPLUS
-  /* LLVM LOCAL begin make sizes add up right.  The size in 'type' counted
-     any unnamed bitfields that we skipped above; add null nodes at the
-     end of the list to compensate. */
-  while (skipped--)
-    {
-      tree ivar = NULL_TREE;
-      ivar = tree_cons (NULL_TREE, build_int_cst (ptr_type_node, 0), ivar);
-      ivar = tree_cons (NULL_TREE, build_int_cst (string_type_node, 0), ivar);
-      ivar = tree_cons (NULL_TREE, build_int_cst (string_type_node, 0), ivar);
-      ivar = tree_cons (NULL_TREE, build_int_cst (NULL_TREE, 0), ivar);
-      ivar = tree_cons (NULL_TREE, build_int_cst (NULL_TREE, 0), ivar);
-
-      initlist = tree_cons (NULL_TREE, 
-                            objc_build_constructor (type, nreverse(ivar)),
-                            initlist);
-    }
-  /* LLVM LOCAL end */
-#endif
-
   return objc_build_constructor (build_array_type (type, 0),
 				 nreverse (initlist));
 }
@@ -10598,10 +10567,7 @@ build_ivar_list_initializer (tree type, tree field_decl)
       obstack_free (&util_obstack, util_firstobj);
 
       /* Set offset.  */
-/* LLVM LOCAL begin make initializer size match type size */
-      ivar = tree_cons (NULL_TREE, convert (integer_type_node,
-                                            byte_position (field_decl)), ivar);
-/* LLVM LOCAL end */
+      ivar = tree_cons (NULL_TREE, byte_position (field_decl), ivar);
       initlist = tree_cons (NULL_TREE,
 			    objc_build_constructor (type, nreverse (ivar)),
 			    initlist);
@@ -10661,14 +10627,6 @@ generate_v2_ivar_offset_ref_lists (void)
       tree decl = TREE_PURPOSE (chain);
       tree offset = TREE_VALUE (chain);
       finish_var_decl (decl, offset);      
-      /* LLVM LOCAL begin - radar 5698757 */
-#ifdef ENABLE_LLVM
-      /* Reset the initializer for this reference as it may have changed with
-         -O0  */
-      if (!optimize)
-        reset_initializer_llvm (decl);
-#endif
-      /* LLVM LOCAL end - radar 5698757 */
     }
 }
 
@@ -10878,17 +10836,8 @@ generate_dispatch_table (tree type, const char *name, int size, tree list, bool 
   decl = start_var_decl (type, synth_id_with_class_suffix
 			       (name, objc_implementation_context));
 
-  /* LLVM LOCAL begin make initializer size match type size */
   /* APPLE LOCAL ObjC new abi */
-#ifdef OBJCPLUS
-  initlist = build_tree_list (NULL_TREE,
-			      build_int_cst (NULL_TREE, init_val));
-#else
-  initlist = build_tree_list (NULL_TREE,
-                              build_int_cst (newabi ? NULL_TREE : ptr_type_node,
-					     init_val));
-#endif
-  /* LLVM LOCAL end */
+  initlist = build_tree_list (NULL_TREE, build_int_cst (NULL_TREE, init_val));
   initlist = tree_cons (NULL_TREE, build_int_cst (NULL_TREE, size), initlist);
   initlist = tree_cons (NULL_TREE, list, initlist);
 
@@ -12271,13 +12220,6 @@ generate_v2_shared_structures (int cls_flags)
                                         build_fold_addr_expr (UOBJC_V2_VTABLE_decl)); 
 
   finish_var_decl (class_decl, initlist);
-  /* LLVM LOCAL begin */
-#ifdef ENABLE_LLVM
-  /* At -O0, we may have emitted references to the decl earlier. */
-  if (!optimize)
-    reset_type_and_initializer_llvm(class_decl);
-#endif
-  /* LLVM LOCAL end */
   objc_add_to_class_list_chain (class_decl);
   if (CLASS_OR_CATEGORY_HAS_LOAD_IMPL (objc_implementation_context) != NULL_TREE)
     objc_add_to_nonlazy_class_list_chain (class_decl);
@@ -13642,13 +13584,6 @@ generate_v2_protocols (void)
 					     UOBJC_PROTOCOL_OPT_CLS_METHODS_decl);
 					     /* APPLE LOCAL end radar 4695109 */
       finish_var_decl (decl, initlist);
-      /* LLVM LOCAL begin */
-#ifdef ENABLE_LLVM
-      /* At -O0, we may have emitted references to the decl earlier. */
-      if (!optimize)
-        reset_initializer_llvm(decl);
-#endif
-      /* LLVM LOCAL end */
       /* APPLE LOCAL radar 4533974 - ObjC new protocol */
       objc_add_to_protocol_list_chain (decl);
     }
@@ -13665,11 +13600,6 @@ build_protocol_reference (tree p)
 
   proto_name = synth_id_with_class_suffix ("_OBJC_PROTOCOL", p);
   decl = start_var_decl (objc_protocol_template, proto_name);
-  /* LLVM LOCAL begin */
-  /* Force 4 byte alignment for protocols */
-  DECL_ALIGN(decl) = 32;
-  DECL_USER_ALIGN(decl) = 1;
-  /* LLVM LOCAL end */
 
   PROTOCOL_FORWARD_DECL (p) = decl;
 }
@@ -18420,15 +18350,16 @@ handle_impent (struct imp_entry *impent)
   else
     return;
 
+  /* LLVM LOCAL begin */
+#ifdef ENABLE_LLVM
+#undef ASM_DECLARE_CLASS_REFERENCE
+#endif
+  /* LLVM LOCAL end */
+  
 #ifdef ASM_DECLARE_CLASS_REFERENCE
   if (flag_next_runtime)
     {
-      /* LLVM LOCAL begin - radar 5702446 */
-#ifdef ENABLE_LLVM
-      if (flag_objc_abi != 2)
-#endif
-      /* LLVM LOCAL end - radar 5702446 */
-        ASM_DECLARE_CLASS_REFERENCE (asm_out_file, string);
+      ASM_DECLARE_CLASS_REFERENCE (asm_out_file, string);
       return;
     }
   else

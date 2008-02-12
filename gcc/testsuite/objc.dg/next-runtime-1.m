@@ -20,5 +20,4 @@
 @end
 
 /* APPLE LOCAL radar 4585769 */
-/* LLVM LOCAL accept llvm syntax */
-/* { dg-final { scan-assembler "L_OBJC_MODULES:.*\n\[ \t\]*\.long\t7\n" } } */
+/* { dg-final { scan-assembler "L_OBJC_MODULES:\n\[ \t\]*\.long\t7\n" } } */

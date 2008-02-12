@@ -87,9 +87,8 @@ static bool isAggregateTreeType(tree type) {
 
 /// isSingleElementStructOrArray - If this is (recursively) a structure with one
 /// field or an array with one element, return the field type, otherwise return
-/// null.  If rejectFatBitField, and the single element is a bitfield of a type
-/// that's bigger than the struct, return null anyway.
-static tree isSingleElementStructOrArray(tree type, bool rejectFatBitfield) {
+/// null.
+static tree isSingleElementStructOrArray(tree type) {
   // Scalars are good.
   if (!isAggregateTreeType(type)) return type;
   
@@ -107,62 +106,36 @@ static tree isSingleElementStructOrArray(tree type, bool rejectFatBitfield) {
 
     for (tree Field = TYPE_FIELDS(type); Field; Field = TREE_CHAIN(Field))
       if (TREE_CODE(Field) == FIELD_DECL) {
-        if (!FoundField) {
-          if (rejectFatBitfield &&
-              TREE_CODE(TYPE_SIZE(type)) == INTEGER_CST &&
-              TREE_INT_CST_LOW(TYPE_SIZE(getDeclaredType(Field))) > 
-              TREE_INT_CST_LOW(TYPE_SIZE(type)))
-            return 0;
+        if (!FoundField)
           FoundField = getDeclaredType(Field);
-        } else
+        else
           return 0;   // More than one field.
       }
-    return FoundField ? isSingleElementStructOrArray(FoundField, false) : 0;
+    return FoundField ? isSingleElementStructOrArray(FoundField) : 0;
   case ARRAY_TYPE:
     const ArrayType *Ty = dyn_cast<ArrayType>(ConvertType(type));
     if (!Ty || Ty->getNumElements() != 1)
       return 0;
-    return isSingleElementStructOrArray(TREE_TYPE(type), false);
+    return isSingleElementStructOrArray(TREE_TYPE(type));
   }
 }
-
-/// isZeroSizedStructOrUnion - Returns true if this is a struct or union 
-/// which is zero bits wide.
-static bool isZeroSizedStructOrUnion(tree type) {
-  if (TREE_CODE(type) != RECORD_TYPE &&
-      TREE_CODE(type) != UNION_TYPE &&
-      TREE_CODE(type) != QUAL_UNION_TYPE)
-    return false;
-  return int_size_in_bytes(type) == 0;
-}
-
-// LLVM_SHOULD_PASS_AGGREGATE_USING_BYVAL_ATTR - Return true if this aggregate
-// value should be passed by value, i.e. passing its address with the byval
-// attribute bit set. The default is false.
-#ifndef LLVM_SHOULD_PASS_AGGREGATE_USING_BYVAL_ATTR
-#define LLVM_SHOULD_PASS_AGGREGATE_USING_BYVAL_ATTR(X, TY) \
-    false
-#endif
-
-// LLVM_SHOULD_PASS_AGGREGATE_IN_MIXED_REGS - Return true if this aggregate
-// value should be passed in a mixture of integer, floating point, and vector
-// registers. The routine should also return by reference a vector of the
-// types of the registers being used. The default is false.
-#ifndef LLVM_SHOULD_PASS_AGGREGATE_IN_MIXED_REGS
-#define LLVM_SHOULD_PASS_AGGREGATE_IN_MIXED_REGS(T, TY, E) \
-    false
-#endif
 
 // LLVM_SHOULD_PASS_AGGREGATE_IN_INTEGER_REGS - Return true if this aggregate
 // value should be passed in integer registers.  By default, we do this for all
 // values that are not single-element structs.  This ensures that things like
 // {short,short} are passed in one 32-bit chunk, not as two arguments (which
-// would often be 64-bits).  We also do it for single-element structs when the
-// single element is a bitfield of a type bigger than the struct; the code
-// for field-by-field struct passing does not handle this one right.
+// would often be 64-bits).
 #ifndef LLVM_SHOULD_PASS_AGGREGATE_IN_INTEGER_REGS
 #define LLVM_SHOULD_PASS_AGGREGATE_IN_INTEGER_REGS(X) \
-   !isSingleElementStructOrArray(X, true)
+   !isSingleElementStructOrArray(X)
+#endif
+
+// LLVM_SHOULD_PASS_AGGREGATE_USING_BYVAL_ATTR - Return true if this aggregate
+// value should be passed by value, i.e. passing its address with the byval
+// attribute bit set. The default is false.
+#ifndef LLVM_SHOULD_PASS_AGGREGATE_USING_BYVAL_ATTR
+#define LLVM_SHOULD_PASS_AGGREGATE_USING_BYVAL_ATTR(X) \
+    false
 #endif
 
 /// DefaultABI - This class implements the default LLVM ABI where structures are
@@ -192,7 +165,7 @@ public:
                // FIXME: this is a hack around returning 'complex double' by-val
                // which returns in r3/r4/r5/r6 on PowerPC.
                TREE_INT_CST_LOW(TYPE_SIZE_UNIT(type)) <= 8) {
-      if (tree SingleElt = isSingleElementStructOrArray(type, false)) {
+      if (tree SingleElt = isSingleElementStructOrArray(type)) {
         C.HandleAggregateResultAsScalar(ConvertType(SingleElt));
       } else {
         // Otherwise return as an integer value large enough to hold the entire
@@ -230,30 +203,23 @@ public:
   /// their fields.
   void HandleArgument(tree type, uint16_t *Attributes = NULL) {
     const Type *Ty = ConvertType(type);
-    // Figure out if this field is zero bits wide, e.g. {} or [0 x int].  Do
-    // not include variable sized fields here.
-    std::vector<const Type*> Elts;
+
     if (isPassedByInvisibleReference(type)) { // variable size -> by-ref.
       C.HandleScalarArgument(PointerType::getUnqual(Ty), type);
     } else if (Ty->isFirstClassType()) {
       C.HandleScalarArgument(Ty, type);
-    } else if (LLVM_SHOULD_PASS_AGGREGATE_IN_MIXED_REGS(type, Ty, Elts)) {
-      PassInMixedRegisters(type, Ty, Elts);
-    } else if (LLVM_SHOULD_PASS_AGGREGATE_USING_BYVAL_ATTR(type, Ty)) {
+    } else if (LLVM_SHOULD_PASS_AGGREGATE_USING_BYVAL_ATTR(type)) {
       C.HandleByValArgument(Ty, type);
       if (Attributes)
         *Attributes |= ParamAttr::ByVal;
     } else if (LLVM_SHOULD_PASS_AGGREGATE_IN_INTEGER_REGS(type)) {
       PassInIntegerRegisters(type, Ty);
-    } else if (isZeroSizedStructOrUnion(type)) {
-      // Zero sized struct or union, just drop it!
-      ;
     } else if (TREE_CODE(type) == RECORD_TYPE) {
       for (tree Field = TYPE_FIELDS(type); Field; Field = TREE_CHAIN(Field))
         if (TREE_CODE(Field) == FIELD_DECL) {
           unsigned FNo = GetFieldIndex(Field);
           assert(FNo != ~0U && "Case not handled yet!");
-          
+
           C.EnterField(FNo, Ty);
           HandleArgument(getDeclaredType(Field));
           C.ExitField();
@@ -381,19 +347,6 @@ public:
       ++i;
     }
     for (unsigned e = Elts.size(); i != e; ++i) {
-      C.EnterField(i, STy);
-      C.HandleScalarArgument(Elts[i], 0);
-      C.ExitField();
-    }
-  }
-
-  /// PassInMixedRegisters - Given an aggregate value that should be passed in
-  /// mixed integer, floating point, and vector registers, convert it to a
-  /// structure containing the specified struct elements in.
-  void PassInMixedRegisters(tree type, const Type *Ty,
-                            std::vector<const Type*> &Elts) {
-    const StructType *STy = StructType::get(Elts, false);
-    for (unsigned i = 0, e = Elts.size(); i != e; ++i) {
       C.EnterField(i, STy);
       C.HandleScalarArgument(Elts[i], 0);
       C.ExitField();

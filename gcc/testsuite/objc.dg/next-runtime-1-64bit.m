@@ -14,5 +14,4 @@
 - (void)boo { }
 @end
 
-/* LLVM LOCAL accept llvm syntax */
-/* { dg-final { scan-assembler "L_OBJC_MODULES:.*\n\[ \t\]*\.quad\t7\n" } } */
+/* { dg-final { scan-assembler "L_OBJC_MODULES:\n\[ \t\]*\.quad\t7\n" } } */

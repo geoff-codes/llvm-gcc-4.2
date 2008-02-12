@@ -232,10 +232,6 @@ static FunctionType *GetFunctionType(const PATypeHolder &Res,
 // type should be passed in by invisible reference.
 //
 bool isPassedByInvisibleReference(tree Type) {
-  // Don't crash in this case.
-  if (Type == error_mark_node)
-    return false;
-
   // FIXME: Search for TREE_ADDRESSABLE in calls.c, and see if there are other
   // cases that make arguments automatically passed in by reference.
   return TREE_ADDRESSABLE(Type) || TYPE_SIZE(Type) == 0 ||
@@ -1161,9 +1157,8 @@ ConvertFunctionType(tree type, tree decl, tree static_chain,
   // If the target has regparam parameters, allow it to inspect the function
   // type.
   int local_regparam = 0;
-  int local_fp_regparam = 0;
 #ifdef LLVM_TARGET_ENABLE_REGPARM
-  LLVM_TARGET_INIT_REGPARM(local_regparam, local_fp_regparam, type);
+  LLVM_TARGET_INIT_REGPARM(local_regparam, type);
 #endif // LLVM_TARGET_ENABLE_REGPARM
   
   // Keep track of whether we see a byval argument.
@@ -1209,11 +1204,10 @@ ConvertFunctionType(tree type, tree decl, tree static_chain,
     
 #ifdef LLVM_TARGET_ENABLE_REGPARM
     // Allow the target to mark this as inreg.
-    if (TREE_CODE(ArgTy) == INTEGER_TYPE || TREE_CODE(ArgTy) == POINTER_TYPE ||
-        TREE_CODE(ArgTy) == REAL_TYPE)
-      LLVM_ADJUST_REGPARM_ATTRIBUTE(Attributes, ArgTy,
+    if (TREE_CODE(ArgTy) == INTEGER_TYPE || TREE_CODE(ArgTy) == POINTER_TYPE)
+      LLVM_ADJUST_REGPARM_ATTRIBUTE(Attributes,
                                     TREE_INT_CST_LOW(TYPE_SIZE(ArgTy)),
-                                    local_regparam, local_fp_regparam);
+                                    local_regparam);
 #endif // LLVM_TARGET_ENABLE_REGPARM
     
     if (Attributes != ParamAttr::None) {
@@ -1281,8 +1275,6 @@ struct StructTypeConversionInfo {
   void extraBitsAvailable (unsigned E) {
     ExtraBitsAvailable = E;
   }
-
-  bool isPacked() { return Packed; }
 
   void markAsPacked() {
     Packed = true;
@@ -1531,8 +1523,36 @@ struct StructTypeConversionInfo {
 
   void addNewBitField(unsigned Size, unsigned FirstUnallocatedByte);
 
+  void convertToPacked();
+  
   void dump() const;
 };
+
+// LLVM disagrees as to where to put field natural field ordering.
+// ordering.  Therefore convert to a packed struct.
+void StructTypeConversionInfo::convertToPacked() {
+  assert (!Packed && "Packing a packed struct!");
+  Packed = true;
+  
+  // Fill the padding that existed from alignment restrictions
+  // with byte arrays to ensure the same layout when converting
+  // to a packed struct.
+  for (unsigned x = 1; x < ElementOffsetInBytes.size(); ++x) {
+    if (ElementOffsetInBytes[x-1] + ElementSizeInBytes[x-1]
+        < ElementOffsetInBytes[x]) {
+      uint64_t padding = ElementOffsetInBytes[x]
+        - ElementOffsetInBytes[x-1] - ElementSizeInBytes[x-1];
+      const Type *Pad = Type::Int8Ty;
+      Pad = ArrayType::get(Pad, padding);
+      ElementOffsetInBytes.insert(ElementOffsetInBytes.begin() + x,
+                                  ElementOffsetInBytes[x-1] +
+                                  ElementSizeInBytes[x-1]);
+      ElementSizeInBytes.insert(ElementSizeInBytes.begin() + x, padding);
+      Elements.insert(Elements.begin() + x, Pad);
+      PaddingElement.insert(PaddingElement.begin() + x, true);
+    }
+  }
+}
 
 // Add new element which is a bit field. Size is not the size of bit filed,
 // but size of bits required to determine type of new Field which will be
@@ -1661,7 +1681,6 @@ static tree FixBaseClassField(tree Field) {
     TYPE_SIZE(newTy) = DECL_SIZE(Field);
     TYPE_SIZE_UNIT(newTy) = DECL_SIZE_UNIT(Field);
     TYPE_MAIN_VARIANT(newTy) = newTy;
-    TYPE_STUB_DECL(newTy) = TYPE_STUB_DECL(oldTy);
     // Change the name.
     if (TYPE_NAME(oldTy)) {
       const char *p = "anon";
@@ -1704,10 +1723,8 @@ static void FixBaseClassFields(tree type) {
         TREE_CODE(DECL_SIZE(Field))==INTEGER_CST &&
         TREE_CODE(TYPE_SIZE(TREE_TYPE(Field)))==INTEGER_CST &&
         TREE_INT_CST_LOW(DECL_SIZE(Field)) < 
-              TREE_INT_CST_LOW(TYPE_SIZE(TREE_TYPE(Field)))) {
+              TREE_INT_CST_LOW(TYPE_SIZE(TREE_TYPE(Field))))
       TREE_TYPE(Field) = FixBaseClassField(Field);
-      DECL_FIELD_REPLACED(Field) = 1;
-    }
   }
   // Size of the complete type will be a multiple of its alignment.
   // In some cases involving empty C++ classes this is not true coming in.
@@ -1743,35 +1760,36 @@ static void FixBaseClassFields(tree type) {
 static void RestoreBaseClassFields(tree type) {
   assert(TREE_CODE(type)==RECORD_TYPE);
   for (tree Field = TYPE_FIELDS(type); Field; Field = TREE_CHAIN(Field)) {
-    if (TREE_CODE(Field) == FIELD_DECL && DECL_FIELD_REPLACED(Field)) {
+    if (TREE_CODE(Field)==FIELD_DECL && 
+        !DECL_BIT_FIELD_TYPE(Field) &&
+        TREE_CODE(DECL_FIELD_OFFSET(Field))==INTEGER_CST &&
+        TREE_CODE(TREE_TYPE(Field))==RECORD_TYPE &&
+        TYPE_SIZE(TREE_TYPE(Field)) &&
+        DECL_SIZE(Field) &&
+        TREE_CODE(DECL_SIZE(Field))==INTEGER_CST &&
+        TREE_CODE(TYPE_SIZE(TREE_TYPE(Field)))==INTEGER_CST) {
       tree &oldTy = BaseTypesMap[TREE_TYPE(Field)];
-      assert(oldTy);
-      TREE_TYPE(Field) = oldTy;
-      DECL_FIELD_REPLACED(Field) = 0;
+      if (oldTy)
+        TREE_TYPE(Field) = oldTy;
     }
   }
 }
 
 
+
 /// DecodeStructFields - This method decodes the specified field, if it is a
 /// FIELD_DECL, adding or updating the specified StructTypeConversionInfo to
-/// reflect it.  Return tree if field is decoded correctly. Otherwise return
-/// false.
-bool TypeConverter::DecodeStructFields(tree Field,
+/// reflect it.  
+void TypeConverter::DecodeStructFields(tree Field,
                                        StructTypeConversionInfo &Info) {
   if (TREE_CODE(Field) != FIELD_DECL ||
       TREE_CODE(DECL_FIELD_OFFSET(Field)) != INTEGER_CST)
-    return true;
+    return;
 
   // Handle bit-fields specially.
   if (isBitfield(Field)) {
-    // Bit-field type does not influence structure alignment. 
-    // For example, struct A { char a; short b; int c:25; char d; } does not
-    // have 4 byte alignment. To enforce this rule, always use packed struct.
-    if (!Info.isPacked())
-      return false;
     DecodeStructBitField(Field, Info);
-    return true;
+    return;
   }
 
   Info.allFieldsAreNotBitFields();
@@ -1789,19 +1807,12 @@ bool TypeConverter::DecodeStructFields(tree Field,
   if (!Info.ResizeLastElementIfOverlapsWith(StartOffsetInBytes, Field, Ty)) {
     // LLVM disagrees as to where this field should go in the natural field
     // ordering.  Therefore convert to a packed struct and try again.
-    return false;
-  } 
-  else if (TYPE_USER_ALIGN(TREE_TYPE(Field))
-           && (unsigned)DECL_ALIGN_UNIT(Field) != Info.getTypeAlignment(Ty)
-           && !Info.isPacked()) {
-    // If Field has user defined alignment and it does not match Ty alignment
-    // then convert to a packed struct and try again.
-    return false;
-  } else
+    Info.convertToPacked();
+    DecodeStructFields(Field, Info);
+  } else 
     // At this point, we know that adding the element will happen at the right
     // offset.  Add it.
     Info.addElement(Ty, StartOffsetInBytes, Info.getTypeSize(Ty));
-  return true;
 }
 
 /// DecodeStructBitField - This method decodes the specified bit-field, adding
@@ -1979,24 +1990,8 @@ const Type *TypeConverter::ConvertRECORD(tree type, tree orig_type) {
   FixBaseClassFields(type);
                                 
   // Convert over all of the elements of the struct.
-  bool retryAsPackedStruct = false;
-  for (tree Field = TYPE_FIELDS(type); Field; Field = TREE_CHAIN(Field)) {
-    if (DecodeStructFields(Field, *Info) == false) {
-      retryAsPackedStruct = true;
-      break;
-    }
-  }
-  
-  if (retryAsPackedStruct) {
-    delete Info;
-    Info = new StructTypeConversionInfo(*TheTarget, TYPE_ALIGN_UNIT(type), 
-                                        true);
-    for (tree Field = TYPE_FIELDS(type); Field; Field = TREE_CHAIN(Field)) {
-      if (DecodeStructFields(Field, *Info) == false) {
-        assert(0 && "Unable to decode struct fields.");
-      }
-    }
-  }
+  for (tree Field = TYPE_FIELDS(type); Field; Field = TREE_CHAIN(Field))
+    DecodeStructFields(Field, *Info);
 
   // If the LLVM struct requires explicit tail padding to be the same size as
   // the GCC struct, insert tail padding now.  This handles, e.g., "{}" in C++.
@@ -2062,11 +2057,6 @@ const Type *TypeConverter::ConvertRECORD(tree type, tree orig_type) {
         // because the FieldOffsetInBits can be lower than it was in the
         // previous iteration.
         CurFieldNo = 0;
-
-        // Skip 'int:0', which just affects layout.
-        unsigned FieldSizeInBits = TREE_INT_CST_LOW(DECL_SIZE(Field));
-        if (FieldSizeInBits == 0)
-          continue;
       }
 
       // Figure out if this field is zero bits wide, e.g. {} or [0 x int].  Do
@@ -2162,8 +2152,12 @@ const Type *TypeConverter::ConvertUNION(tree type, tree orig_type) {
       continue;
 
     const Type *TheTy = ConvertType(TREE_TYPE(Field));
+    bool isPacked = false;
     unsigned Size  = TD.getABITypeSize(TheTy);
     unsigned Align = TD.getABITypeAlignment(TheTy);
+    if (const StructType *STy = dyn_cast<StructType>(TheTy)) 
+      if (STy->isPacked())
+        isPacked = true;
     
     adjustPaddingElement(UnionTy, TheTy);
 
@@ -2179,7 +2173,7 @@ const Type *TypeConverter::ConvertUNION(tree type, tree orig_type) {
       useTheTy = true;
     else if (MaxAlign == Align && Size > MaxSize)
       useTheTy = true;
-    else if (Size > MaxSize)
+    else if (isPacked && Size > MaxSize)
       useTheTy = true;
 
     if (useTheTy) {

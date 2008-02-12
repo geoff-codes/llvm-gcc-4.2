@@ -665,12 +665,7 @@ lex_string (cpp_reader *pfile, cpp_token *token, const uchar *base)
     cpp_error (pfile, CPP_DL_WARNING,
 	       "null character(s) preserved in literal");
 
-  /* APPLE LOCAL begin #error with unmatched quotes 5607574 */
-  if (type == CPP_OTHER
-      && CPP_OPTION (pfile, lang) != CLK_ASM
-      && !pfile->state.in_diagnostic
-      && !pfile->state.skipping)
-  /* APPLE LOCAL end #error with unmatched quotes 5607574 */
+  if (type == CPP_OTHER && CPP_OPTION (pfile, lang) != CLK_ASM)
     cpp_error (pfile, CPP_DL_PEDWARN, "missing terminating %c character",
 	       (int) terminator);
 

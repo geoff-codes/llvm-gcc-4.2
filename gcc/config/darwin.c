@@ -1527,11 +1527,11 @@ const char *darwin_objc_llvm_implicit_target_global_var_section(tree decl) {
     
     if (!strcmp(IDENTIFIER_POINTER(typename), "__builtin_ObjCString")) {
       if (flag_next_runtime)
-        return "__OBJC, __cstring_object,regular,no_dead_strip";
+        return "__OBJC,__cstring_object,regular,no_dead_strip";
       else
-        return "__OBJC, __string_object,no_dead_strip";
+        return "__OBJC,__string_object,no_dead_strip";
     } else if (!strcmp(IDENTIFIER_POINTER(typename), "__builtin_CFString")) {
-      return "__DATA, __cfstring";
+      return "__DATA,__cfstring";
     } else {
       return 0;
     }
@@ -1563,13 +1563,9 @@ const char *darwin_objc_llvm_implicit_target_global_var_section(tree decl) {
   else if (!strncmp (name, "CLASS_REFERENCES", 16))
     return "__OBJC,__cls_refs,literal_pointers,no_dead_strip";
   else if (!strncmp (name, "CLASS_", 6))
-    return (flag_objc_abi == 1 ? 
-            "__OBJC,__class,regular,no_dead_strip" :
-            "__DATA,__data");
+    return "__OBJC,__class,regular,no_dead_strip";
   else if (!strncmp (name, "METACLASS_", 10))
-    return (flag_objc_abi == 1 ?
-            "__OBJC,__meta_class,regular,no_dead_strip" :
-            "__DATA,__data");
+    return "__OBJC,__meta_class,regular,no_dead_strip";
   else if (!strncmp (name, "CATEGORY_", 9))
     return "__OBJC,__category,regular,no_dead_strip";
   else if (!strncmp (name, "SELECTOR_REFERENCES", 19))
@@ -1584,7 +1580,7 @@ const char *darwin_objc_llvm_implicit_target_global_var_section(tree decl) {
     return "__OBJC,__module_info,regular,no_dead_strip";
   else if (!strncmp (name, "IMAGE_INFO", 10))
     return (flag_objc_abi == 1 ? 
-            "__OBJC, __image_info,regular" /*,no_dead_strip";*/ :
+            "__OBJC,__image_info,regular" /*,no_dead_strip";*/ :
             "__DATA, __objc_imageinfo, regular, no_dead_strip");
   else if (!strncmp (name, "PROTOCOL_INSTANCE_METHODS_", 26))
     return "__OBJC,__cat_inst_meth,regular,no_dead_strip";
@@ -1989,21 +1985,16 @@ darwin_non_lazy_pcrel (FILE *file, rtx addr)
    VISIBILITY_INTERNAL or VISIBILITY_PROTECTED. */
 
 void
-/* LLVM LOCAL begin */
-darwin_assemble_visibility (tree decl ATTRIBUTE_UNUSED, int vis)
+darwin_assemble_visibility (tree decl, int vis)
 {
   if (vis == VISIBILITY_DEFAULT)
     ;
   else if (vis == VISIBILITY_HIDDEN)
     {
-/* LLVM LOCAL */
-#ifndef ENABLE_LLVM
       fputs ("\t.private_extern ", asm_out_file);
       assemble_name (asm_out_file,
 		     (IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (decl))));
       fputs ("\n", asm_out_file);
-/* LLVM LOCAL */
-#endif
     }
   else
     warning (OPT_Wattributes, "internal and protected visibility attributes "

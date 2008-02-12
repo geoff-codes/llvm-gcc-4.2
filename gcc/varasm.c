@@ -1889,15 +1889,7 @@ assemble_variable (tree decl, int top_level ATTRIBUTE_UNUSED,
     fprintf(stderr, "LLVM must emit the data!");
     abort();
   }
-
   emit_global_to_llvm(decl);
-
-  /* The "make_assemble_visibility" method may issue a warning if the visibility
-     attribute isn't supported in a configuration. This is all done through a
-     call-back. We want to issue this same warning when needed.  */
-  if (TREE_PUBLIC (decl))
-    maybe_assemble_visibility (decl);
-
   return;
 #endif
   /* LLVM LOCAL end */
@@ -5315,15 +5307,10 @@ default_assemble_visibility (tree decl, int vis)
   name = IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (decl));
   type = visibility_types[vis];
 
-
 #ifdef HAVE_GAS_HIDDEN
-/* LLVM LOCAL */
-#ifndef ENABLE_LLVM
   fprintf (asm_out_file, "\t.%s\t", type);
   assemble_name (asm_out_file, name);
   fprintf (asm_out_file, "\n");
-/* LLVM LOCAL */
-#endif
 #else
   warning (OPT_Wattributes, "visibility attribute not supported "
 	   "in this configuration; ignored");

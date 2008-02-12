@@ -949,31 +949,15 @@ extern GTY(()) section * darwin_sections[NUM_DARWIN_SECTIONS];
 /* LLVM LOCAL */
 #endif /*ENABLE_LLVM*/
 
-/* LLVM LOCAL begin */
-#ifdef ENABLE_LLVM
-#define ASM_DECLARE_CLASS_REFERENCE(FILE,NAME)                          \
-  do {                                                                  \
-    if (FILE) {                                                         \
-      char *Buffer = alloca(strlen(NAME) + 30);                         \
-      sprintf(Buffer, "\t%s=0", NAME);                                  \
-      llvm_emit_file_scope_asm(Buffer);                                 \
-      sprintf(Buffer, "\t.globl %s", NAME);                             \
-      llvm_emit_file_scope_asm(Buffer);                                 \
-    }                                                                   \
-  } while (0)
-#else
-/* LLVM LOCAL end */
-#define ASM_DECLARE_CLASS_REFERENCE(FILE,NAME)                          \
-  do {                                                                  \
-    if (FILE) {                                                         \
-      fprintf (FILE, "\t");                                             \
-      assemble_name (FILE, NAME);					\
-      fprintf (FILE, "=0\n");                                           \
-      (*targetm.asm_out.globalize_label) (FILE, NAME);                  \
-    }                                                                   \
-  } while (0)
-/* LLVM LOCAL */
-#endif /*ENABLE_LLVM*/
+#define ASM_DECLARE_CLASS_REFERENCE(FILE,NAME)				\
+    do {								\
+	 if (FILE) {							\
+	   fprintf (FILE, "\t");					\
+	   assemble_name (FILE, NAME);					\
+	   fprintf (FILE, "=0\n");					\
+	   (*targetm.asm_out.globalize_label) (FILE, NAME);		\
+	 }								\
+       } while (0)
 
 /* Globalizing directive for a label.  */
 #define GLOBAL_ASM_OP ".globl "
@@ -1162,9 +1146,10 @@ enum machopic_addr_class {
 
 #define DARWIN_REGISTER_TARGET_PRAGMAS()			\
   do {								\
-    /* APPLE LOCAL begin pragma mark 5614511 */			\
-    /* Removed mark.  */					\
-    /* APPLE LOCAL end pragma mark 5614511 */			\
+    /* APPLE LOCAL begin mainline 2007-10-10 5497482 */		\
+    cpp_register_pragma (parse_in, NULL, "mark",		\
+			 darwin_pragma_ignore, false);		\
+    /* APPLE LOCAL end mainline 2007-10-10 5497482 */		\
     c_register_pragma (0, "options", darwin_pragma_options);	\
     c_register_pragma (0, "segment", darwin_pragma_ignore);	\
     /* APPLE LOCAL pragma fenv */                               \

@@ -1482,11 +1482,8 @@ rs6000_override_options (const char *default_cpu)
 	{
 	  flag_disable_opts_for_faltivec = 1;
 	  /* APPLE LOCAL radar 4161346 */
-/* LLVM LOCAL begin handle -mpim-altivec correctly */
-	  target_flags |= MASK_ALTIVEC;
+	  target_flags |= (MASK_ALTIVEC | MASK_PIM_ALTIVEC);
 	}
-      target_flags |= MASK_PIM_ALTIVEC;
-/* LLVM LOCAL begin handle -mpim-altivec correctly */
     }
   /* APPLE LOCAL end AltiVec */
 
@@ -13104,8 +13101,6 @@ rs6000_assemble_visibility (tree decl, int vis)
       && DOT_SYMBOLS
       && TREE_CODE (decl) == FUNCTION_DECL)
     {
-/* LLVM LOCAL */
-#ifndef ENABLE_LLVM
       static const char * const visibility_types[] = {
 	NULL, "internal", "hidden", "protected"
       };
@@ -13118,8 +13113,6 @@ rs6000_assemble_visibility (tree decl, int vis)
 
       fprintf (asm_out_file, "\t.%s\t%s\n", type, name);
       fprintf (asm_out_file, "\t.%s\t.%s\n", type, name);
-/* LLVM LOCAL */
-#endif
     }
   else
     default_assemble_visibility (decl, vis);

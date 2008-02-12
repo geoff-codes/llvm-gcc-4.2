@@ -369,7 +369,6 @@ static void createOptimizationPasses() {
     PM->add(createLoopRotatePass());            // Rotate Loop
     PM->add(createLICMPass());                  // Hoist loop invariants
     PM->add(createLoopUnswitchPass(optimize_size ? true : false));
-    PM->add(createLoopIndexSplitPass());        // Split loop index
     PM->add(createInstructionCombiningPass());  // Clean up after LICM/reassoc
     PM->add(createIndVarSimplifyPass());        // Canonicalize indvars
     if (flag_unroll_loops)
@@ -816,48 +815,6 @@ void reset_initializer_llvm(tree decl) {
   GV->setInitializer(Init);
 }
   
-/// reset_type_and_initializer_llvm - Change the type and initializer for 
-/// a global variable.
-void reset_type_and_initializer_llvm(tree decl) {
-  // If there were earlier errors we can get here when DECL_LLVM has not
-  // been set.  Don't crash.
-  if ((errorcount || sorrycount) && !DECL_LLVM(decl))
-    return;
-
-  // Get or create the global variable now.
-  GlobalVariable *GV = cast<GlobalVariable>(DECL_LLVM(decl));
-  
-  // Temporary to avoid infinite recursion (see comments emit_global_to_llvm)
-  GV->setInitializer(UndefValue::get(GV->getType()->getElementType()));
-
-  // Convert the initializer over.
-  Constant *Init = TreeConstantToLLVM::Convert(DECL_INITIAL(decl));
-
-  // If we had a forward definition that has a type that disagrees with our
-  // initializer, insert a cast now.  This sort of thing occurs when we have a
-  // global union, and the LLVM type followed a union initializer that is
-  // different from the union element used for the type.
-  if (GV->getType()->getElementType() != Init->getType()) {
-    GV->removeFromParent();
-    GlobalVariable *NGV = new GlobalVariable(Init->getType(), GV->isConstant(),
-                                             GV->getLinkage(), 0,
-                                             GV->getName(), TheModule);
-    NGV->setVisibility(GV->getVisibility());
-    GV->replaceAllUsesWith(ConstantExpr::getBitCast(NGV, GV->getType()));
-    if (AttributeUsedGlobals.count(GV)) {
-      AttributeUsedGlobals.remove(GV);
-      AttributeUsedGlobals.insert(NGV);
-    }
-    changeLLVMValue(GV, NGV);
-    delete GV;
-    SET_DECL_LLVM(decl, NGV);
-    GV = NGV;
-  }
-
-  // Set the initializer.
-  GV->setInitializer(Init);
-}
-  
 /// emit_global_to_llvm - Emit the specified VAR_DECL or aggregate CONST_DECL to
 /// LLVM as a global variable.  This function implements the end of
 /// assemble_variable.
@@ -962,15 +919,24 @@ void emit_global_to_llvm(tree decl) {
       GV->setSection(Section);
 #endif
     }
+#ifdef LLVM_IMPLICIT_TARGET_GLOBAL_VAR_SECTION
+    else if (TREE_CODE(decl) == CONST_DECL) {
+      if (const char *Section = 
+          LLVM_IMPLICIT_TARGET_GLOBAL_VAR_SECTION(decl)) {
+        GV->setSection(Section);
+      }
+    }
+#endif
+
     
     // Set the alignment for the global if one of the following condition is met
-    // 1) DECL_ALIGN_UNIT is better than the alignment as per ABI specification
+    // 1) DECL_ALIGN_UNIT does not match alignment as per ABI specification
     // 2) DECL_ALIGN is set by user.
     if (DECL_ALIGN_UNIT(decl)) {
       unsigned TargetAlign =
         getTargetData().getABITypeAlignment(GV->getType()->getElementType());
       if (DECL_USER_ALIGN(decl) ||
-          TargetAlign < (unsigned)DECL_ALIGN_UNIT(decl))
+          TargetAlign != (unsigned)DECL_ALIGN_UNIT(decl))
         GV->setAlignment(DECL_ALIGN_UNIT(decl));
     }
 
@@ -981,16 +947,8 @@ void emit_global_to_llvm(tree decl) {
     // Add annotate attributes for globals
     if (DECL_ATTRIBUTES(decl))
       AddAnnotateAttrsToGlobal(GV, decl);
-  
-#ifdef LLVM_IMPLICIT_TARGET_GLOBAL_VAR_SECTION
-  } else if (TREE_CODE(decl) == CONST_DECL) {
-    if (const char *Section = 
-        LLVM_IMPLICIT_TARGET_GLOBAL_VAR_SECTION(decl)) {
-      GV->setSection(Section);
-    }
-#endif
   }
-
+  
   if (TheDebugInfo) TheDebugInfo->EmitGlobalVariable(GV, decl); 
 
   TREE_ASM_WRITTEN(decl) = 1;

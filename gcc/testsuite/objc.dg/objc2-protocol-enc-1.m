@@ -28,10 +28,9 @@ Foo <X, Y, Z> *IVAR_Fooxyz;
 @dynamic x, xy, xyz, fooxyz;
 @end
 
-/* LLVM LOCAL begin accept llvm syntax (asciz) */
-/* { dg-final { scan-assembler ".asci.*T\@.*<X><Y><Z>.*" } } */
-/* { dg-final { scan-assembler ".asci.*T\@.*Foo<X><Y><Z>.*" } } */
-/* LLVM LOCAL end */
+
+/* { dg-final { scan-assembler ".ascii.*T\@.*<X><Y><Z>.*" } } */
+/* { dg-final { scan-assembler ".ascii.*T\@.*Foo<X><Y><Z>.*" } } */
 
 /**
 This protocol should generate the following metadata:

@@ -18,7 +18,5 @@
 
 @implementation Foo (Category)
 @end
-/* LLVM LOCAL begin accept llvm syntax */
-/* { dg-final { scan-assembler "L_.*OBJC_PROTOCOL_\\\$_Proto1:" } } */
-/* { dg-final { scan-assembler "L_.*OBJC_PROTOCOL_\\\$_Proto2:" } } */
-/* LLVM LOCAL end */
+/* { dg-final { scan-assembler "L_ZL23_OBJC_PROTOCOL_\\\$_Proto1:" } } */
+/* { dg-final { scan-assembler "L_ZL23_OBJC_PROTOCOL_\\\$_Proto2:" } } */

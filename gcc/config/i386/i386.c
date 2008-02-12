@@ -1246,9 +1246,6 @@ static void ix86_dwarf_handle_frame_unspec (const char *, rtx, int);
 static void i386_solaris_elf_named_section (const char *, unsigned int, tree)
   ATTRIBUTE_UNUSED;
 
-/* LLVM LOCAL begin */
-
-#ifndef ENABLE_LLVM
 /* Register class used for passing given 64bit part of the argument.
    These represent classes as documented by the PS ABI, with the exception
    of SSESF, SSEDF classes, that are basically SSE class, just gcc will
@@ -1271,10 +1268,6 @@ enum x86_64_reg_class
     X86_64_COMPLEX_X87_CLASS,
     X86_64_MEMORY_CLASS
   };
-#endif /* !ENABLE_LLVM */
-
-/* LLVM LOCAL end */
-
 static const char * const x86_64_reg_class_name[] = {
   "no", "integer", "integerSI", "sse", "sseSF", "sseDF",
   "sseup", "x87", "x87up", "cplx87", "no"
@@ -15847,26 +15840,6 @@ ix86_init_mmx_sse_builtins (void)
   tree float128_type;
   tree ftype;
 
-  /* APPLE LOCAL begin LLVM */
-#ifdef ENABLE_LLVM
-  /* LLVM doesn't initialize the RTL backend, so build_vector_type will assign
-    all of these types BLKmode.  This interferes with i386.c-specific
-    argument passing routines.  As such, give them the correct modes here
-    manually. */
-  TYPE_MODE (V16QI_type_node) = V16QImode;
-  TYPE_MODE (V2SI_type_node) = V2SImode;
-  TYPE_MODE (V2SF_type_node) = V2SFmode;
-  TYPE_MODE (V2DI_type_node) = V2DImode;
-  TYPE_MODE (V2DF_type_node) = V2DFmode;
-  TYPE_MODE (V4SF_type_node) = V4SFmode;
-  TYPE_MODE (V4SI_type_node) = V4SImode;
-  TYPE_MODE (V4HI_type_node) = V4HImode;
-  TYPE_MODE (V8QI_type_node) = V8QImode;
-  TYPE_MODE (V8HI_type_node) = V8HImode;
-  TYPE_MODE (V1DI_type_node) = V1DImode;
-#endif
-  /* APPLE LOCAL end LLVM */
-
   /* The __float80 type.  */
   if (TYPE_MODE (long_double_type_node) == XFmode)
     (*lang_hooks.types.register_builtin_type) (long_double_type_node,
@@ -21561,14 +21534,8 @@ enum machine_mode ix86_getNaturalModeForType(tree type) {
 }
 
 int ix86_HowToPassArgument(enum machine_mode mode, tree type, int in_return,
-                           int *int_nregs, int *sse_nregs) {
+                             int *int_nregs, int *sse_nregs) {
   return examine_argument(mode, type, in_return, int_nregs, sse_nregs);
-}
-
-int ix86_ClassifyArgument(enum machine_mode mode, tree type,
-                          enum x86_64_reg_class classes[MAX_CLASSES],
-                          int bit_offset) {
-  return classify_argument(mode, type, classes, bit_offset);
 }
 
   
