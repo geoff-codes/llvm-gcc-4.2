@@ -709,7 +709,7 @@ void TreeToLLVM::StartFunctionBody() {
     const Type *ArgTy = ConvertType(TREE_TYPE(Args));
     bool isInvRef = isPassedByInvisibleReference(TREE_TYPE(Args));
     if (isInvRef ||
-        (!ArgTy->isSingleValueType() &&
+        (!ArgTy->isFirstClassType() &&
          isPassedByVal(TREE_TYPE(Args), ArgTy, ScalarArgs))) {
       // If the value is passed by 'invisible reference' or 'byval reference',
       // the l-value for the argument IS the argument itself.
@@ -842,17 +842,6 @@ Function *TreeToLLVM::FinishFunctionBody() {
   // Remove any cached LLVM values that are local to this function.  Such values
   // may be deleted when the optimizers run, so would be dangerous to keep.
   eraseLocalLLVMValues();
-
-  // Simplify any values that were uniqued using a no-op bitcast.
-  for (std::vector<BitCastInst *>::iterator I = UniquedValues.begin(),
-       E = UniquedValues.end(); I != E; ++I) {
-    BitCastInst *BI = *I;
-    assert(BI->getSrcTy() == BI->getDestTy() && "Not a no-op bitcast!");
-    BI->replaceAllUsesWith(BI->getOperand(0));
-    // Safe to erase because after the call to eraseLocalLLVMValues.
-    BI->eraseFromParent();
-  }
-  UniquedValues.clear();
 
   return Fn;
 }
@@ -1171,7 +1160,7 @@ Value *TreeToLLVM::CastToType(unsigned opcode, Value *V, const Type* Ty) {
       return CI->getOperand(0);
   // Do an end-run around the builder's folding logic.
   // TODO: introduce a new builder class that does target specific folding.
-  Value *Result = Builder.Insert(CastInst::Create(Instruction::CastOps(opcode),
+  Value *Result = Builder.Insert(CastInst::create(Instruction::CastOps(opcode),
                                                   V, Ty, V->getNameStart()));
 
   // If this is a constantexpr, fold the instruction with
@@ -1258,7 +1247,7 @@ AllocaInst *TreeToLLVM::CreateTemporary(const Type *Ty) {
     // alloc instructions before.  It doesn't matter what this instruction is,
     // it is dead.  This allows us to insert allocas in order without having to
     // scan for an insertion point. Use BitCast for int -> int
-    AllocaInsertionPoint = CastInst::Create(Instruction::BitCast,
+    AllocaInsertionPoint = CastInst::create(Instruction::BitCast,
       Constant::getNullValue(Type::Int32Ty), Type::Int32Ty, "alloca point");
     // Insert it as the first instruction in the entry block.
     Fn->begin()->getInstList().insert(Fn->begin()->begin(),
@@ -1307,7 +1296,7 @@ static void CopyAggregate(MemRef DestLoc, MemRef SrcLoc,
 
   unsigned Alignment = std::min(DestLoc.Alignment, SrcLoc.Alignment);
 
-  if (ElTy->isSingleValueType()) {
+  if (ElTy->isFirstClassType()) {
     LoadInst *V = Builder.CreateLoad(SrcLoc.Ptr, SrcLoc.Volatile, "tmp");
     StoreInst *S = Builder.CreateStore(V, DestLoc.Ptr, DestLoc.Volatile);
     V->setAlignment(Alignment);
@@ -1341,7 +1330,7 @@ static void CopyAggregate(MemRef DestLoc, MemRef SrcLoc,
 /// CountAggregateElements - Return the number of elements in the specified type
 /// that will need to be loaded/stored if we copy this by explicit accesses.
 static unsigned CountAggregateElements(const Type *Ty) {
-  if (Ty->isSingleValueType()) return 1;
+  if (Ty->isFirstClassType()) return 1;
 
   if (const StructType *STy = dyn_cast<StructType>(Ty)) {
     unsigned NumElts = 0;
@@ -1392,7 +1381,7 @@ void TreeToLLVM::EmitAggregateCopy(MemRef DestLoc, MemRef SrcLoc, tree type) {
 static void ZeroAggregate(MemRef DestLoc, IRBuilder &Builder) {
   const Type *ElTy =
     cast<PointerType>(DestLoc.Ptr->getType())->getElementType();
-  if (ElTy->isSingleValueType()) {
+  if (ElTy->isFirstClassType()) {
     StoreInst *St = Builder.CreateStore(Constant::getNullValue(ElTy),
                                         DestLoc.Ptr, DestLoc.Volatile);
     St->setAlignment(DestLoc.Alignment);
@@ -2659,7 +2648,7 @@ Value *TreeToLLVM::EmitCallOf(Value *Callee, tree exp, const MemRef *DestLoc,
     const Type *ArgTy = ConvertType(TREE_TYPE(TREE_VALUE(arg)));
 
     // Push the argument.
-    if (ArgTy->isSingleValueType()) {
+    if (ArgTy->isFirstClassType()) {
       // A scalar - push the value.
       Client.pushValue(Emit(TREE_VALUE(arg), 0));
     } else {
@@ -2745,18 +2734,19 @@ Value *TreeToLLVM::EmitCallOf(Value *Callee, tree exp, const MemRef *DestLoc,
   return 0;
 }
 
-/// HandleMultiplyDefinedGimpleTemporary - Gimple temporaries *mostly* have a
-/// single definition, in which case all uses are dominated by the definition.
-/// This routine exists to handle the rare case of a gimple temporary with
-/// multiple definitions.  It turns the temporary into an ordinary automatic
-/// variable by creating an alloca for it, initializing the alloca with the
-/// first definition that was seen, and fixing up any existing uses to load
-/// the alloca instead.
+/// HandleMultiplyDefinedGCCTemp - GCC temporaries are *mostly* single
+/// definition, and always have all uses dominated by the definition.  In cases
+/// where the temporary has multiple uses, we will first see the initial 
+/// definition, some uses of that definition, then subsequently see another
+/// definition with uses of this second definition.
 ///
-void TreeToLLVM::HandleMultiplyDefinedGimpleTemporary(tree Var) {
-  Value *UniqVal = DECL_LLVM(Var);
-  assert(isa<CastInst>(UniqVal) && "Invalid value for gimple temporary!");
-  Value *FirstVal = cast<CastInst>(UniqVal)->getOperand(0);
+/// Because LLVM temporaries *must* be single definition, when we see the second
+/// definition, we actually change the temporary to mark it as not being a GCC
+/// temporary anymore.  We then create an alloca for it, initialize it with the
+/// first value seen, then treat it as a normal variable definition.
+///
+void TreeToLLVM::HandleMultiplyDefinedGCCTemp(tree Var) {
+  Value *FirstVal = DECL_LLVM(Var);
 
   // Create a new temporary and set the VAR_DECL to use it as the llvm location.
   Value *NewTmp = CreateTemporary(FirstVal->getType());
@@ -2766,11 +2756,11 @@ void TreeToLLVM::HandleMultiplyDefinedGimpleTemporary(tree Var) {
   // being stored is an instruction, emit the store right after the instruction,
   // otherwise, emit it into the entry block.
   StoreInst *SI = new StoreInst(FirstVal, NewTmp);
-
+  
   BasicBlock::iterator InsertPt;
   if (Instruction *I = dyn_cast<Instruction>(FirstVal)) {
     InsertPt = I;                      // Insert after the init instruction.
-
+    
     // If the instruction is an alloca in the entry block, the insert point
     // will be before the alloca.  Advance to the AllocaInsertionPoint if we are
     // before it.
@@ -2784,7 +2774,7 @@ void TreeToLLVM::HandleMultiplyDefinedGimpleTemporary(tree Var) {
         }
       }
     }
-
+    
     // If the instruction is an invoke, the init is inserted on the normal edge.
     if (InvokeInst *II = dyn_cast<InvokeInst>(I)) {
       InsertPt = II->getNormalDest()->begin();
@@ -2798,12 +2788,7 @@ void TreeToLLVM::HandleMultiplyDefinedGimpleTemporary(tree Var) {
   }
   BasicBlock *BB = InsertPt->getParent();
   BB->getInstList().insert(InsertPt, SI);
-
-  // Replace any uses of the original value with a load of the alloca.
-  for (Value::use_iterator U = UniqVal->use_begin(), E = UniqVal->use_end();
-       U != E; ++U)
-    U.getUse().set(new LoadInst(NewTmp, "mtmp", cast<Instruction>(*U)));
-
+  
   // Finally, This is no longer a GCC temporary.
   DECL_GIMPLE_FORMAL_TEMP_P(Var) = 0;
 }
@@ -2821,22 +2806,13 @@ Value *TreeToLLVM::EmitMODIFY_EXPR(tree exp, const MemRef *DestLoc) {
   if (isGimpleTemporary(lhs)) {
     // If DECL_LLVM is already set, this is a multiply defined gimple temporary.
     if (DECL_LLVM_SET_P(lhs)) {
-      HandleMultiplyDefinedGimpleTemporary(lhs);
+      HandleMultiplyDefinedGCCTemp(lhs);
       return EmitMODIFY_EXPR(exp, DestLoc);
     }
     Value *RHS = Emit(rhs, 0);
-    const Type *LHSTy = ConvertType(TREE_TYPE(lhs));
-    // The value may need to be replaced later if this temporary is multiply
-    // defined - ensure it can be uniquely identified by not folding the cast.
-    Instruction::CastOps opc = CastInst::getCastOpcode(RHS, RHSSigned,
-                                                       LHSTy, LHSSigned);
-    CastInst *Cast = CastInst::Create(opc, RHS, LHSTy, RHS->getNameStart());
-    if (opc == Instruction::BitCast && RHS->getType() == LHSTy)
-      // Simplify this no-op bitcast once the function is emitted.
-      UniquedValues.push_back(cast<BitCastInst>(Cast));
-    Builder.Insert(Cast);
-    SET_DECL_LLVM(lhs, Cast);
-    return Cast;
+    RHS = CastToAnyType(RHS, RHSSigned, ConvertType(TREE_TYPE(lhs)), LHSSigned);
+    SET_DECL_LLVM(lhs, RHS);
+    return RHS;
   } else if (TREE_CODE(lhs) == VAR_DECL && DECL_REGISTER(lhs) &&
              TREE_STATIC(lhs)) {
     // If this is a store to a register variable, EmitLV can't handle the dest
@@ -2860,7 +2836,7 @@ Value *TreeToLLVM::EmitMODIFY_EXPR(tree exp, const MemRef *DestLoc) {
 
   if (!LV.isBitfield()) {
     const Type *ValTy = ConvertType(TREE_TYPE(rhs));
-    if (ValTy->isSingleValueType()) {
+    if (ValTy->isFirstClassType()) {
       // Non-bitfield, scalar value.  Just emit a store.
       Value *RHS = Emit(rhs, 0);
       // Convert RHS to the right type if we can, otherwise convert the pointer.
@@ -3224,7 +3200,7 @@ Value *TreeToLLVM::EmitBinOp(tree exp, const MemRef *DestLoc, unsigned Opc) {
     return EmitPtrBinOp(exp, Opc);   // Pointer arithmetic!
   if (isa<StructType>(Ty))
     return EmitComplexBinOp(exp, DestLoc);
-  assert(Ty->isSingleValueType() && DestLoc == 0 &&
+  assert(Ty->isFirstClassType() && DestLoc == 0 &&
          "Bad binary operation!");
   
   Value *LHS = Emit(TREE_OPERAND(exp, 0), 0);
@@ -3641,7 +3617,7 @@ Value *TreeToLLVM::EmitReadOfRegisterVariable(tree decl,
   
   // If there was an error, return something bogus.
   if (ValidateRegisterVariable(decl)) {
-    if (Ty->isSingleValueType())
+    if (Ty->isFirstClassType())
       return UndefValue::get(Ty);
     return 0;   // Just don't copy something into DestLoc.
   }
@@ -3944,7 +3920,7 @@ Value *TreeToLLVM::EmitASM_EXPR(tree exp) {
       cast<PointerType>(Dest.Ptr->getType())->getElementType();
     
     assert(!Dest.isBitfield() && "Cannot assign into a bitfield!");
-    if (!AllowsMem && DestValTy->isSingleValueType()) { // Reg dest -> asm return
+    if (!AllowsMem && DestValTy->isFirstClassType()) { // Reg dest -> asm return
       StoreCallResultAddrs.push_back(Dest.Ptr);
       ConstraintStr += ",=";
       ConstraintStr += SimplifiedConstraint;
@@ -3979,7 +3955,7 @@ Value *TreeToLLVM::EmitASM_EXPR(tree exp) {
       const Type *LLVMTy = ConvertType(type);
 
       Value *Op = 0;
-      if (LLVMTy->isSingleValueType()) {
+      if (LLVMTy->isFirstClassType()) {
         if (TREE_CODE(Val)==ADDR_EXPR &&
             TREE_CODE(TREE_OPERAND(Val,0))==LABEL_DECL) {
           // Emit the label, but do not assume it is going to be the target
@@ -4271,7 +4247,7 @@ bool TreeToLLVM::EmitBuiltinCall(tree exp, tree fndecl,
         error("%Hunsupported target builtin %<%s%> used", &EXPR_LOCATION(exp),
               BuiltinName);
         const Type *ResTy = ConvertType(TREE_TYPE(exp));
-        if (ResTy->isSingleValueType())
+        if (ResTy->isFirstClassType())
           Result = UndefValue::get(ResTy);
         return true;
       }
@@ -5718,7 +5694,7 @@ Value *TreeToLLVM::EmitCONSTRUCTOR(tree exp, const MemRef *DestLoc) {
     return BuildVector(BuildVecOps);
   }
 
-  assert(!Ty->isSingleValueType() && "Constructor for scalar type??");
+  assert(!Ty->isFirstClassType() && "Constructor for scalar type??");
   
   // Start out with the value zero'd out.
   EmitAggregateZero(*DestLoc, type);
@@ -5746,7 +5722,7 @@ Value *TreeToLLVM::EmitCONSTRUCTOR(tree exp, const MemRef *DestLoc) {
     if (!tree_purpose)
       return 0;  // Not actually initialized?
 
-    if (!ConvertType(TREE_TYPE(tree_purpose))->isSingleValueType()) {
+    if (!ConvertType(TREE_TYPE(tree_purpose))->isFirstClassType()) {
       Value *V = Emit(tree_value, DestLoc);
       assert(V == 0 && "Aggregate value returned in a register?");
     } else {
@@ -5951,7 +5927,7 @@ Constant *TreeConstantToLLVM::ConvertNOP_EXPR(tree exp) {
   bool TyIsSigned = !TYPE_UNSIGNED(TREE_TYPE(exp));
   
   // If this is a structure-to-structure cast, just return the uncasted value.
-  if (!Elt->getType()->isSingleValueType() || !Ty->isSingleValueType())
+  if (!Elt->getType()->isFirstClassType() || !Ty->isFirstClassType())
     return Elt;
   
   // Elt and Ty can be integer, float or pointer here: need generalized cast
@@ -6604,12 +6580,9 @@ Constant *TreeConstantToLLVM::EmitLV_STRING_CST(tree exp) {
   }
     
   // Create a new string global.
-  const TargetAsmInfo *TAI = TheTarget->getTargetAsmInfo();
   GlobalVariable *GV = new GlobalVariable(Init->getType(), StringIsConstant,
-                                          GlobalVariable::InternalLinkage, Init,
-                                           TAI ? 
-                                            TAI->getStringConstantPrefix() : 
-                                            ".str", TheModule);
+                                          GlobalVariable::InternalLinkage,
+                                          Init, ".str", TheModule);
   if (SlotP) *SlotP = GV;
   return GV;
 }

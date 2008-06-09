@@ -43,13 +43,6 @@ Software Foundation, 51 Franklin Street, Fifth Floor, Boston, MA
 #include "target.h"
 #include "output.h"
 
-/* LLVM LOCAL begin comment out most of this file */
-#ifdef ENABLE_LLVM
-#undef INSN_SCHEDULING
-#endif
-
-#ifdef INSN_SCHEDULING
-/* LLVM LOCAL end */
 /* The number of insns scheduled so far.  */
 static int sched_n_insns;
 
@@ -780,6 +773,3 @@ ebb_head_or_leaf_p (basic_block bb, int leaf_p)
     return bitmap_bit_p (&ebb_tail, bb->index);
 }
 #endif /* ENABLE_CHECKING  */
-/* LLVM LOCAL begin */
-#endif /* INSN_SCHEDULING */
-/* LLVM LOCAL end */

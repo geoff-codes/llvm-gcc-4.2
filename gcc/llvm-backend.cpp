@@ -51,7 +51,6 @@ Software Foundation, 59 Temple Place - Suite 330, Boston, MA
 #include "llvm/Support/Streams.h"
 #include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "llvm/System/Program.h"
 #include <cassert>
 #undef VISIBILITY_HIDDEN
 extern "C" {
@@ -129,9 +128,9 @@ void llvm_initialize_backend(void) {
     Args.push_back("--debug-pass=Structure");
   if (flag_debug_pass_arguments)
     Args.push_back("--debug-pass=Arguments");
-  if (optimize_size || optimize < 3)
+  if (optimize_size)
     // Reduce inline limit. Default limit is 200.
-    Args.push_back("--inline-threshold=50");
+    Args.push_back("--inline-threshold=100");
   if (flag_unwind_tables)
     Args.push_back("--unwind-tables");
 
@@ -273,10 +272,6 @@ void llvm_pch_write_init(void) {
   PerModulePasses = new PassManager();
   PerModulePasses->add(new TargetData(*TheTarget->getTargetData()));
 
-  // If writing to stdout, set binary mode.
-  if (asm_out_file == stdout)
-    sys::Program::ChangeStdoutToBinary();
-
   // Emit an LLVM .bc file to the output.  This is used when passed
   // -emit-llvm -c to the GCC driver.
   PerModulePasses->add(CreateBitcodeWriterPass(*AsmOutStream));
@@ -333,6 +328,7 @@ static void createOptimizationPasses() {
     else
       PerFunctionPasses->add(createScalarReplAggregatesPass());
     PerFunctionPasses->add(createInstructionCombiningPass());
+    //    PerFunctionPasses->add(createCFGSimplificationPass());
   }
 
   // FIXME: AT -O0/O1, we should stream out functions at a time.
@@ -357,12 +353,15 @@ static void createOptimizationPasses() {
     PM->add(createCFGSimplificationPass());       // Clean up after IPCP & DAE
     if (flag_unit_at_a_time && flag_exceptions)
       PM->add(createPruneEHPass());               // Remove dead EH info
-    if (flag_inline_trees > 1)                  // respect -fno-inline-functions
-      PM->add(createFunctionInliningPass());    // Inline small functions
-    if (optimize > 2)
-      PM->add(createArgumentPromotionPass());   // Scalarize uninlined fn args
-    if (!optimize_size)
-      PM->add(createTailDuplicationPass());     // Simplify cfg by copying code    
+
+    if (optimize > 1) {
+      if (flag_inline_trees > 1)                  // respect -fno-inline-functions
+        PM->add(createFunctionInliningPass());    // Inline small functions
+      if (optimize > 2)
+        PM->add(createArgumentPromotionPass()); // Scalarize uninlined fn args
+    }
+    
+    PM->add(createTailDuplicationPass());       // Simplify cfg by copying code
     if (!lang_hooks.flag_no_builtin())
       PM->add(createSimplifyLibCallsPass());    // Library Call Optimizations
     PM->add(createInstructionCombiningPass());  // Cleanup for scalarrepl.
@@ -378,9 +377,8 @@ static void createOptimizationPasses() {
     PM->add(createLICMPass());                  // Hoist loop invariants
     PM->add(createLoopUnswitchPass(optimize_size ? true : false));
     PM->add(createLoopIndexSplitPass());        // Split loop index
-    PM->add(createInstructionCombiningPass());  
+    PM->add(createInstructionCombiningPass());  // Clean up after LICM/reassoc
     PM->add(createIndVarSimplifyPass());        // Canonicalize indvars
-    PM->add(createLoopDeletionPass());          // Delete dead loops
     if (flag_unroll_loops)
       PM->add(createLoopUnrollPass());          // Unroll small loops
     PM->add(createInstructionCombiningPass());  // Clean up after the unroller
@@ -393,7 +391,7 @@ static void createOptimizationPasses() {
     PM->add(createInstructionCombiningPass());
     PM->add(createCondPropagationPass());       // Propagate conditionals
     PM->add(createDeadStoreEliminationPass());  // Delete dead stores
-    PM->add(createAggressiveDCEPass());   // Delete dead instructions
+    PM->add(createAggressiveDCEPass());         // SSA based 'Aggressive DCE'
     PM->add(createCFGSimplificationPass());     // Merge & remove BBs
 
     if (flag_unit_at_a_time) {
@@ -477,10 +475,6 @@ void llvm_asm_file_start(void) {
     // Disable emission of .ident into the output file... which is completely
     // wrong for llvm/.bc emission cases.
     flag_no_ident = 1;
-
-  // If writing to stdout, set binary mode.
-  if (asm_out_file == stdout)
-    sys::Program::ChangeStdoutToBinary();
 
   AttributeUsedGlobals.clear();
   timevar_pop(TV_LLVM_INIT);
@@ -992,12 +986,11 @@ void emit_global_to_llvm(tree decl) {
   // Set the linkage.
   if (!TREE_PUBLIC(decl)) {
     GV->setLinkage(GlobalValue::InternalLinkage);
-  } else if (DECL_WEAK(decl) || DECL_ONE_ONLY(decl)) {
-    GV->setLinkage(GlobalValue::WeakLinkage);
-  } else if (DECL_COMMON(decl) &&  // DECL_COMMON is only meaningful if no init
-              (!DECL_INITIAL(decl) || DECL_INITIAL(decl) == error_mark_node)) {
+  } else if (DECL_WEAK(decl) || DECL_ONE_ONLY(decl) ||
+             (DECL_COMMON(decl) &&  // DECL_COMMON is only meaningful if no init
+              (!DECL_INITIAL(decl) || DECL_INITIAL(decl) == error_mark_node))) {
     // llvm-gcc also includes DECL_VIRTUAL_P here.
-    GV->setLinkage(GlobalValue::CommonLinkage);
+    GV->setLinkage(GlobalValue::WeakLinkage);
   } else if (DECL_COMDAT(decl)) {
     GV->setLinkage(GlobalValue::LinkOnceLinkage);
   }
@@ -1087,7 +1080,7 @@ bool ValidateRegisterVariable(tree decl) {
 #endif
   else if (DECL_INITIAL(decl) != 0 && TREE_STATIC(decl))
     error("global register variable has initial value");
-  else if (!Ty->isSingleValueType())
+  else if (!Ty->isFirstClassType())
     sorry("%JLLVM cannot handle register variable %qD, report a bug",
           decl, decl);
   else {

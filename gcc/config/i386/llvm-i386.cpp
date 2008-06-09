@@ -147,16 +147,6 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
       Result = Ops[0];
     }
     return true;
-  case IX86_BUILTIN_SHUFPD:
-    if (ConstantInt *Elt = dyn_cast<ConstantInt>(Ops[2])) {
-      int EV = Elt->getZExtValue();
-      Result = BuildVectorShuffle(Ops[0], Ops[1],
-                                  ((EV & 0x01) >> 0),   ((EV & 0x02) >> 1)+2);
-    } else {
-      error("%Hmask must be an immediate", &EXPR_LOCATION(exp));
-      Result = Ops[0];
-    }
-    return true;
   case IX86_BUILTIN_PSHUFW:
   case IX86_BUILTIN_PSHUFD:
     if (ConstantInt *Elt = dyn_cast<ConstantInt>(Ops[1])) {
@@ -224,9 +214,6 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
   case IX86_BUILTIN_PUNPCKHDQ128:
     Result = BuildVectorShuffle(Ops[0], Ops[1], 2, 6, 3, 7);
     return true;
-  case IX86_BUILTIN_PUNPCKHQDQ128:
-    Result = BuildVectorShuffle(Ops[0], Ops[1], 1, 3);
-    return true;
   case IX86_BUILTIN_PUNPCKLBW128:
     Result = BuildVectorShuffle(Ops[0], Ops[1],  0, 16,  1, 17,
                                                  2, 18,  3, 19,
@@ -239,20 +226,11 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
   case IX86_BUILTIN_PUNPCKLDQ128:
     Result = BuildVectorShuffle(Ops[0], Ops[1], 0, 4, 1, 5);
     return true;
-  case IX86_BUILTIN_PUNPCKLQDQ128:
-    Result = BuildVectorShuffle(Ops[0], Ops[1], 0, 2);
-    return true;
   case IX86_BUILTIN_UNPCKHPS:
     Result = BuildVectorShuffle(Ops[0], Ops[1], 2, 6, 3, 7);
     return true;
-  case IX86_BUILTIN_UNPCKHPD:
-    Result = BuildVectorShuffle(Ops[0], Ops[1], 1, 3);
-    return true;
   case IX86_BUILTIN_UNPCKLPS:
     Result = BuildVectorShuffle(Ops[0], Ops[1], 0, 4, 1, 5);
-    return true;
-  case IX86_BUILTIN_UNPCKLPD:
-    Result = BuildVectorShuffle(Ops[0], Ops[1], 0, 2);
     return true;
   case IX86_BUILTIN_MOVHLPS:
     Result = BuildVectorShuffle(Ops[0], Ops[1], 6, 7, 2, 3);
@@ -262,9 +240,6 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
     return true;
   case IX86_BUILTIN_MOVSS:
     Result = BuildVectorShuffle(Ops[0], Ops[1], 4, 1, 2, 3);
-    return true;
-  case IX86_BUILTIN_MOVSD:
-    Result = BuildVectorShuffle(Ops[0], Ops[1], 2, 1);
     return true;
   case IX86_BUILTIN_MOVQ: {
     Value *Zero = ConstantInt::get(Type::Int32Ty, 0);
@@ -300,22 +275,6 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
     Ops[1] = BuildVector(Load, UndefValue::get(Type::DoubleTy), NULL);
     Ops[1] = Builder.CreateBitCast(Ops[1], ResultType, "tmp");
     Result = BuildVectorShuffle(Ops[0], Ops[1], 4, 5, 2, 3);
-    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
-    return true;
-  }
-  case IX86_BUILTIN_LOADHPD: {
-    Value *Load = Builder.CreateLoad(Ops[1], "tmp");
-    Ops[1] = BuildVector(Load, UndefValue::get(Type::DoubleTy), NULL);
-    Ops[1] = Builder.CreateBitCast(Ops[1], ResultType, "tmp");
-    Result = BuildVectorShuffle(Ops[0], Ops[1], 0, 2);
-    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
-    return true;
-  }
-  case IX86_BUILTIN_LOADLPD: {
-    Value *Load = Builder.CreateLoad(Ops[1], "tmp");
-    Ops[1] = BuildVector(Load, UndefValue::get(Type::DoubleTy), NULL);
-    Ops[1] = Builder.CreateBitCast(Ops[1], ResultType, "tmp");
-    Result = BuildVectorShuffle(Ops[0], Ops[1], 2, 1);
     Result = Builder.CreateBitCast(Result, ResultType, "tmp");
     return true;
   }
@@ -554,12 +513,7 @@ static bool llvm_x86_64_should_pass_aggregate_in_memory(tree TreeType,
                                                         enum machine_mode Mode){
   int IntRegs, SSERegs;
   /* If ix86_HowToPassArgument return 0, then it's passed byval in memory.*/
-  int ret = ix86_HowToPassArgument(Mode, TreeType, 0, &IntRegs, &SSERegs);
-  if (ret==0)
-    return true;
-  if (ret==1 && IntRegs==0 && SSERegs==0)   // zero-sized struct
-    return true;
-  return false;
+  return !ix86_HowToPassArgument(Mode, TreeType, 0, &IntRegs, &SSERegs);
 }
 
 /* Returns true if all elements of the type are integer types. */
@@ -748,18 +702,14 @@ llvm_x86_64_should_pass_aggregate_in_mixed_regs(tree TreeType, const Type *Ty,
     case X86_64_SSE_CLASS:
       // If it's a SSE class argument, then one of the followings are possible:
       // 1. 1 x SSE, size is 8: 1 x Double.
-      // 2. 1 x SSE, size is 4: 1 x Float.
-      // 3. 1 x SSE + 1 x SSEUP, size is 16: 1 x <4 x i32>, <4 x f32>,
+      // 2. 1 x SSE + 1 x SSEUP, size is 16: 1 x <4 x i32>, <4 x f32>,
       //                                         <2 x i64>, or <2 x f64>.
-      // 4. 1 x SSE + 1 x SSESF, size is 12: 1 x Double, 1 x Float.
-      // 5. 2 x SSE, size is 16: 2 x Double.
+      // 3. 1 x SSE + 1 x SSESF, size is 12: 1 x Double, 1 x Float.
+      // 4. 2 x SSE, size is 16: 2 x Double.
       if ((NumClasses-i) == 1) {
         if (Bytes == 8) {
           Elts.push_back(Type::DoubleTy);
           Bytes -= 8;
-        } else if (Bytes == 4) {
-          Elts.push_back (Type::FloatTy);
-          Bytes -= 4;
         } else
           assert(0 && "Not yet handled!");
       } else if ((NumClasses-i) == 2) {
@@ -808,10 +758,6 @@ llvm_x86_64_should_pass_aggregate_in_mixed_regs(tree TreeType, const Type *Ty,
         } else if (Class[i+1] == X86_64_INTEGER_CLASS) {
           Elts.push_back(VectorType::get(Type::FloatTy, 2));
           Elts.push_back(Type::Int64Ty);
-        } else if (Class[i+1] == X86_64_NO_CLASS) {
-          // padding bytes, don't pass
-          Elts.push_back(Type::DoubleTy);
-          Bytes -= 16;
         } else
           assert(0 && "Not yet handled!");
         ++i; // Already handled the next one.
@@ -872,22 +818,6 @@ tree llvm_x86_should_return_vector_as_scalar(tree type, bool isBuiltin) {
   return 0;
 }
 
-/* MMX vectors are returned in XMM0 on x86-64 Darwin.  The easiest way to
-   communicate this is pretend they're doubles.
-   Judging from comments, this would not be right for Win64.  Don't know
-   about Linux.  */
-tree llvm_x86_should_return_selt_struct_as_scalar(tree type) {
-  tree retType = isSingleElementStructOrArray(type, true, false);
-  if (!retType || !TARGET_64BIT || !TARGET_MACHO)
-    return retType;
-  if (TREE_CODE(retType) == VECTOR_TYPE &&
-      TYPE_SIZE(retType) &&
-      TREE_CODE(TYPE_SIZE(retType))==INTEGER_CST &&
-      TREE_INT_CST_LOW(TYPE_SIZE(retType))==64)
-    return double_type_node;
-  return retType;
-}
-
 /* MMX vectors v2i32, v4i16, v8i8, v2f32 are returned using sret on Darwin
    32-bit.  Vectors bigger than 128 are returned using sret.  */
 bool llvm_x86_should_return_vector_as_shadow(tree type, bool isBuiltin) {
@@ -942,7 +872,7 @@ static bool llvm_suitable_multiple_ret_value_type(const Type *Ty,
     const Type *ETy = STy->getElementType(i);
     if (const ArrayType *ATy = dyn_cast<ArrayType>(ETy))
       ETy = ATy->getElementType();
-    if (!ETy->isSingleValueType() && ETy->getTypeID() != Type::X86_FP80TyID)
+    if (!ETy->isFirstClassType() && ETy->getTypeID() != Type::X86_FP80TyID)
       return false;
     if (ETy->isInteger())
       foundInt = true;
@@ -1030,18 +960,14 @@ llvm_x86_64_get_multiple_return_reg_classes(tree TreeType, const Type *Ty,
     case X86_64_SSE_CLASS:
       // If it's a SSE class argument, then one of the followings are possible:
       // 1. 1 x SSE, size is 8: 1 x Double.
-      // 2. 1 x SSE, size is 4: 1 x Float.
-      // 3. 1 x SSE + 1 x SSEUP, size is 16: 1 x <4 x i32>, <4 x f32>,
+      // 2. 1 x SSE + 1 x SSEUP, size is 16: 1 x <4 x i32>, <4 x f32>,
       //                                         <2 x i64>, or <2 x f64>.
-      // 4. 1 x SSE + 1 x SSESF, size is 12: 1 x Double, 1 x Float.
-      // 5. 2 x SSE, size is 16: 2 x Double.
+      // 3. 1 x SSE + 1 x SSESF, size is 12: 1 x Double, 1 x Float.
+      // 4. 2 x SSE, size is 16: 2 x Double.
       if ((NumClasses-i) == 1) {
         if (Bytes == 8) {
           Elts.push_back(Type::DoubleTy);
           Bytes -= 8;
-        } else if (Bytes == 4) {
-          Elts.push_back(Type::FloatTy);
-          Bytes -= 4;
         } else
           assert(0 && "Not yet handled!");
       } else if ((NumClasses-i) == 2) {
@@ -1216,7 +1142,7 @@ void llvm_x86_extract_multiple_return_value(Value *Src, Value *Dest,
     const Type *DestElemType = DestTy->getElementType(DNO);
 
     // Directly access first class values using getresult.
-    if (DestElemType->isSingleValueType()) {
+    if (DestElemType->isFirstClassType()) {
       Value *GEP = Builder.CreateStructGEP(Dest, DNO, "mrv_gep");
       GetResultInst *GR = Builder.CreateGetResult(Src, SNO, "mrv_gr");
       Builder.CreateStore(GR, GEP, isVolatile);
@@ -1319,54 +1245,6 @@ Value *llvm_x86_load_scalar_argument(Value *L,
     L = Builder.CreateGEP(L, ConstantInt::get(llvm::Type::Int32Ty, 1), "gep");
   }
   return Loc;
-}
-
-/// llvm_x86_should_pass_aggregate_in_integer_regs - x86-32 is same as the
-/// default.  x86-64 detects the case where a type is 16 bytes long but
-/// only 8 of them are passed, the rest being padding (*size is set to 8
-/// to identify this case).  It also pads out the size to that of a full
-/// register.  This means we'll be loading bytes off the end of the object
-/// in some cases.  That's what gcc does, so it must be OK, right?  Right?
-bool llvm_x86_should_pass_aggregate_in_integer_regs(tree type, unsigned *size,
-                                                    bool *DontCheckAlignment)
-{
-  *size = 0;
-  if (TARGET_64BIT) {
-    enum x86_64_reg_class Class[MAX_CLASSES];
-    enum machine_mode Mode = ix86_getNaturalModeForType(type);
-    int NumClasses = ix86_ClassifyArgument(Mode, type, Class, 0);
-    *DontCheckAlignment= true;
-    if (NumClasses == 1 && (Class[0] == X86_64_INTEGER_CLASS ||
-                            Class[0] == X86_64_INTEGERSI_CLASS)) {
-      // one int register
-      HOST_WIDE_INT Bytes =
-        (Mode == BLKmode) ? int_size_in_bytes(type) : (int) GET_MODE_SIZE(Mode);
-      if (Bytes>4)
-        *size = 8;
-      else if (Bytes>2)
-        *size = 4;
-      else
-        *size = Bytes;
-      return true;
-    }
-    if (NumClasses == 2 && (Class[0] == X86_64_INTEGERSI_CLASS ||
-                            Class[0] == X86_64_INTEGER_CLASS)) {
-      if (Class[1] == X86_64_INTEGER_CLASS) {
-        // 16 byte object, 2 int registers
-        *size = 16;
-        return true;
-      }
-      // IntegerSI can occur only as element 0.
-      if (Class[1] == X86_64_NO_CLASS) {
-        // 16 byte object, only 1st register has information
-        *size = 8;
-        return true;
-      }
-    }
-    return false;    
-  }
-  else 
-    return !isSingleElementStructOrArray(type, false, true);
 }
 
 /* LLVM LOCAL end (ENTIRE FILE!)  */

@@ -277,8 +277,8 @@ static const Type* getLLVMAggregateTypeForStructReturn(tree type) {
 // single element is a bitfield of a type bigger than the struct; the code
 // for field-by-field struct passing does not handle this one right.
 #ifndef LLVM_SHOULD_PASS_AGGREGATE_IN_INTEGER_REGS
-#define LLVM_SHOULD_PASS_AGGREGATE_IN_INTEGER_REGS(X, Y, Z) \
-   !isSingleElementStructOrArray((X), false, true)
+#define LLVM_SHOULD_PASS_AGGREGATE_IN_INTEGER_REGS(X) \
+   !isSingleElementStructOrArray(X, false, true)
 #endif
 
 // LLVM_SHOULD_RETURN_SELT_STRUCT_AS_SCALAR - Return a TYPE tree if this single
@@ -363,7 +363,7 @@ public:
         C.HandleScalarShadowArgument(PointerType::getUnqual(Ty), false);
       else
         C.HandleScalarResult(Ty);
-    } else if (Ty->isSingleValueType() || Ty == Type::VoidTy) {
+    } else if (Ty->isFirstClassType() || Ty == Type::VoidTy) {
       // Return scalar values normally.
       C.HandleScalarResult(Ty);
     } else if (doNotUseShadowReturn(type, fn)) {
@@ -402,8 +402,6 @@ public:
   /// their fields.
   void HandleArgument(tree type, std::vector<const Type*> &ScalarElts,
                       ParameterAttributes *Attributes = NULL) {
-    unsigned Size = 0;
-    bool DontCheckAlignment = false;
     const Type *Ty = ConvertType(type);
     // Figure out if this field is zero bits wide, e.g. {} or [0 x int].  Do
     // not include variable sized fields here.
@@ -414,12 +412,12 @@ public:
       ScalarElts.push_back(PtrTy);
     } else if (Ty->getTypeID()==Type::VectorTyID) {
       if (LLVM_SHOULD_PASS_VECTOR_IN_INTEGER_REGS(type)) {
-        PassInIntegerRegisters(type, Ty, ScalarElts, 0, false);
+        PassInIntegerRegisters(type, Ty, ScalarElts);
       } else {
         C.HandleScalarArgument(Ty, type);
         ScalarElts.push_back(Ty);
       }
-    } else if (Ty->isSingleValueType()) {
+    } else if (Ty->isFirstClassType()) {
       C.HandleScalarArgument(Ty, type);
       ScalarElts.push_back(Ty);
     } else if (LLVM_SHOULD_PASS_AGGREGATE_IN_MIXED_REGS(type, Ty, Elts)) {
@@ -440,31 +438,20 @@ public:
         *Attributes |= 
           ParamAttr::constructAlignmentFromInt(LLVM_BYVAL_ALIGNMENT(type));
       }
-    } else if (LLVM_SHOULD_PASS_AGGREGATE_IN_INTEGER_REGS(type, &Size,
-                                                     &DontCheckAlignment)) {
-      PassInIntegerRegisters(type, Ty, ScalarElts, Size, DontCheckAlignment);
+    } else if (LLVM_SHOULD_PASS_AGGREGATE_IN_INTEGER_REGS(type)) {
+      PassInIntegerRegisters(type, Ty, ScalarElts);
     } else if (isZeroSizedStructOrUnion(type)) {
       // Zero sized struct or union, just drop it!
       ;
     } else if (TREE_CODE(type) == RECORD_TYPE) {
       for (tree Field = TYPE_FIELDS(type); Field; Field = TREE_CHAIN(Field))
         if (TREE_CODE(Field) == FIELD_DECL) {
-          const tree Ftype = getDeclaredType(Field);
-          const Type *FTy = ConvertType(Ftype);
           unsigned FNo = GetFieldIndex(Field);
           assert(FNo != ~0U && "Case not handled yet!");
-
-          // Currently, a bvyal type inside a non-byval struct is a zero-length
-          // object inside a bigger object on x86-64.  This type should be
-          // skipped (but only when it is inside a bigger object).
-          // (We know there currently are no other such cases active because
-          // they would hit the assert in FunctionPrologArgumentConversion::
-          // HandleByValArgument.)
-          if (!LLVM_SHOULD_PASS_AGGREGATE_USING_BYVAL_ATTR(Ftype, FTy)) {
-            C.EnterField(FNo, Ty);
-            HandleArgument(getDeclaredType(Field), ScalarElts);
-            C.ExitField();
-          }
+          
+          C.EnterField(FNo, Ty);
+          HandleArgument(getDeclaredType(Field), ScalarElts);
+          C.ExitField();
         }
     } else if (TREE_CODE(type) == COMPLEX_TYPE) {
       C.EnterField(0, Ty);
@@ -533,15 +520,10 @@ public:
     
   /// PassInIntegerRegisters - Given an aggregate value that should be passed in
   /// integer registers, convert it to a structure containing ints and pass all
-  /// of the struct elements in.  If Size is set we pass only that many bytes.
+  /// of the struct elements in.
   void PassInIntegerRegisters(tree type, const Type *Ty,
-                              std::vector<const Type*> &ScalarElts,
-                              unsigned origSize, bool DontCheckAlignment) {
-    unsigned Size;
-    if (origSize)
-      Size = origSize;
-    else
-      Size = TREE_INT_CST_LOW(TYPE_SIZE(type))/8;
+                              std::vector<const Type*> &ScalarElts) {
+    unsigned Size = TREE_INT_CST_LOW(TYPE_SIZE(type))/8;
 
     // FIXME: We should preserve all aggregate value alignment information.
     // Work around to preserve some aggregate value alignment information:
@@ -549,7 +531,7 @@ public:
     // from Int64 alignment. ARM backend needs this.
     unsigned Align = TYPE_ALIGN(type)/8;
     unsigned Int64Align = getTargetData().getABITypeAlignment(Type::Int64Ty);
-    bool UseInt64 = DontCheckAlignment ? true : (Align >= Int64Align);
+    bool UseInt64 = (Align >= Int64Align);
 
     // FIXME: In cases where we can, we should use the original struct.
     // Consider cases like { int, int } and {int, short} for example!  This will

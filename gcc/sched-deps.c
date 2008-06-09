@@ -45,13 +45,6 @@ Software Foundation, 51 Franklin Street, Fifth Floor, Boston, MA
 #include "df.h"
 
 
-/* LLVM LOCAL begin comment out most of this file */
-#ifdef ENABLE_LLVM
-#undef INSN_SCHEDULING
-#endif
-
-#ifdef INSN_SCHEDULING
-/* LLVM LOCAL end */
 static regset reg_pending_sets;
 static regset reg_pending_clobbers;
 static regset reg_pending_uses;
@@ -2132,7 +2125,6 @@ ds_merge (ds_t ds1, ds_t ds2)
 
   return ds;
 }
-#endif
 
 #ifdef INSN_SCHEDULING
 #ifdef ENABLE_CHECKING
@@ -2207,6 +2199,4 @@ check_dep_status (enum reg_note dt, ds_t ds, bool relaxed_p)
     }
 }
 #endif
-/* LLVM LOCAL begin */
-#endif  /* INSN_SCHEDULING */
-/* LLVM LOCAL end */
+#endif  

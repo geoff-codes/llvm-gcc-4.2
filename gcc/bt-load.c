@@ -38,8 +38,6 @@ Software Foundation, 51 Franklin Street, Fifth Floor, Boston, MA
 #include "toplev.h"
 #include "tree-pass.h"
 
-/* LLVM LOCAL begin comment out most of this file */
-#ifndef ENABLE_LLVM
 /* Target register optimizations - these are performed after reload.  */
 
 typedef struct btr_def_group_s
@@ -1494,8 +1492,6 @@ branch_target_load_optimize (bool after_prologue_epilogue_gen)
 			PROP_DEATH_NOTES | PROP_REG_INFO);
     }
 }
-#endif
-/* LLVM LOCAL end */
 
 static bool
 gate_handle_branch_target_load_optimize (void)
@@ -1507,9 +1503,12 @@ gate_handle_branch_target_load_optimize (void)
 static unsigned int
 rest_of_handle_branch_target_load_optimize (void)
 {
-/* LLVM LOCAL begin - reduce cc1 size.  */
-#ifndef ENABLE_LLVM
   static int warned = 0;
+/* LLVM LOCAL begin - reduce cc1 size.  */
+#ifdef ENABLE_LLVM
+  return 0;
+#endif
+/* LLVM LOCAL end.  */
   /* Leave this a warning for now so that it is possible to experiment
      with running this pass twice.  In 3.6, we should either make this
      an error, or use separate dump files.  */
@@ -1524,8 +1523,6 @@ rest_of_handle_branch_target_load_optimize (void)
     }
 
   branch_target_load_optimize (epilogue_completed);
-#endif
-/* LLVM LOCAL end.  */
   return 0;
 }
 

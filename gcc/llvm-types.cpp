@@ -1321,7 +1321,7 @@ struct StructTypeConversionInfo {
   /// getTypeSize - Return the size of the specified type in bytes.
   ///
   unsigned getTypeSize(const Type *Ty) const {
-    return TD.getABITypeSize(Ty);
+    return Packed ? TD.getTypeStoreSize(Ty) : TD.getABITypeSize(Ty);
   }
   
   /// getLLVMType - Return the LLVM type for the specified object.
@@ -2179,7 +2179,7 @@ const Type *TypeConverter::ConvertUNION(tree type, tree orig_type) {
   const TargetData &TD = getTargetData();
   const Type *UnionTy = 0;
   tree GccUnionTy = 0;
-  unsigned MaxAlignSize = 0, MaxAlign = 0;
+  unsigned MaxSize = 0, MaxAlign = 0;
   for (tree Field = TYPE_FIELDS(type); Field; Field = TREE_CHAIN(Field)) {
     if (TREE_CODE(Field) != FIELD_DECL) continue;
 //    assert(getFieldOffsetInBits(Field) == 0 && "Union with non-zero offset?");
@@ -2233,27 +2233,29 @@ const Type *TypeConverter::ConvertUNION(tree type, tree orig_type) {
     const Type *TheTy = ConvertType(TheGccTy);
     unsigned Size  = TD.getABITypeSize(TheTy);
     unsigned Align = TD.getABITypeAlignment(TheTy);
-
+    
     adjustPaddingElement(GccUnionTy, TheGccTy);
 
-    // Select TheTy as union type if it is more aligned than any other.  If more
-    // than one field achieves the maximum alignment then choose the biggest.
-    bool useTheTy;
+    // Select TheTy as union type if it meets one of the following criteria
+    // 1) UnionTy is 0
+    // 2) TheTy alignment is more then UnionTy
+    // 3) TheTy size is greater than UnionTy size and TheTy alignment is 
+    //    equal to UnionTy
+    // 4) TheTy size is greater then UnionTy size and TheTy is packed
+    bool useTheTy = false;
     if (UnionTy == 0)
       useTheTy = true;
-    else if (Align < MaxAlign)
-      useTheTy = false;
     else if (Align > MaxAlign)
       useTheTy = true;
-    else if (Size > MaxAlignSize)
+    else if (MaxAlign == Align && Size > MaxSize)
       useTheTy = true;
-    else
-      useTheTy = false;
+    else if (Size > MaxSize)
+      useTheTy = true;
 
     if (useTheTy) {
       UnionTy = TheTy;
       GccUnionTy = TheGccTy;
-      MaxAlignSize = Size;
+      MaxSize = MAX(MaxSize, Size);
       MaxAlign = Align;
     }
 
@@ -2264,36 +2266,40 @@ const Type *TypeConverter::ConvertUNION(tree type, tree orig_type) {
   }
 
   std::vector<const Type*> UnionElts;
-  unsigned EltAlign = 0;
-  unsigned EltSize = 0;
+  unsigned UnionSize = 0;
   if (UnionTy) {            // Not an empty union.
-    EltAlign = TD.getABITypeAlignment(UnionTy);
-    EltSize = TD.getABITypeSize(UnionTy);
+    UnionSize = TD.getABITypeSize(UnionTy);
     UnionElts.push_back(UnionTy);
   }
-
+  
   // If the LLVM struct requires explicit tail padding to be the same size as
   // the GCC union, insert tail padding now.  This handles cases where the union
   // has larger alignment than the largest member does, thus requires tail
   // padding.
   if (TYPE_SIZE(type) && TREE_CODE(TYPE_SIZE(type)) == INTEGER_CST) {
     unsigned GCCTypeSize = ((unsigned)TREE_INT_CST_LOW(TYPE_SIZE(type))+7)/8;
-
-    if (EltSize != GCCTypeSize) {
-      assert(EltSize < GCCTypeSize &&
+    
+    if (UnionSize != GCCTypeSize) {
+      assert(UnionSize < GCCTypeSize &&
              "LLVM type size doesn't match GCC type size!");
       const Type *PadTy = Type::Int8Ty;
-      if (GCCTypeSize-EltSize != 1)
-        PadTy = ArrayType::get(PadTy, GCCTypeSize-EltSize);
+      if (GCCTypeSize-UnionSize != 1)
+        PadTy = ArrayType::get(PadTy, GCCTypeSize-UnionSize);
       UnionElts.push_back(PadTy);
     }
   }
-
-  bool isPacked = EltAlign > TYPE_ALIGN_UNIT(type);
-  const Type *ResultTy = StructType::get(UnionElts, isPacked);
+  
+  // If this is an empty union, but there is tail padding, make a filler.
+  if (UnionTy == 0) {
+    unsigned Size = ((unsigned)TREE_INT_CST_LOW(TYPE_SIZE(type))+7)/8;
+    UnionTy = Type::Int8Ty;
+    if (Size != 1) UnionTy = ArrayType::get(UnionTy, Size);
+  }
+  
+  const Type *ResultTy = StructType::get(UnionElts, false);
   const OpaqueType *OldTy = cast_or_null<OpaqueType>(GET_TYPE_LLVM(type));
   TypeDB.setType(type, ResultTy);
-
+  
   // If there was a forward declaration for this type that is now resolved,
   // refine anything that used it to the new type.
   if (OldTy)

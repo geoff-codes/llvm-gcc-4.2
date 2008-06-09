@@ -86,7 +86,6 @@ void dummy_function() {
   llvm::createMemCpyOptPass();
   llvm::createDeadTypeEliminationPass();
   llvm::createLoopDeletionPass();
-  llvm::createDeadCodeEliminationPass();
   
 }
 
