@@ -16,7 +16,7 @@ int foo() {
     static int static_local = 10;
     int local;
     CallBlock( ^ {++glob;  		
-		  CallBlock(^ { 
+		  CallBlock(^ { |glob, static_local| /* { dg-warning "has been deprecated in blocks" } */
 				++glob;
 				stat++;
 			        ++static_local;

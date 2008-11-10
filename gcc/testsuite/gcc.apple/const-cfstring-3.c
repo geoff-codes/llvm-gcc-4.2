@@ -4,7 +4,7 @@
 /* Developed by Ziemowit Laski <zlaski@apple.com>.  */
 
 /* { dg-do compile { target *-*-darwin* } } */
-/* { dg-require-effective-target ilp32 } */
+/* { dg-skip-if "" { *-*-darwin* } { "-m64" } { "" } } */
 /* { dg-options "-fconstant-cfstrings" } */
 
 typedef const struct __CFString *CFStringRef;
@@ -26,7 +26,5 @@ void foo(void) {
   s0 = s1;
 }
 
-/* LLVM LOCAL begin allow for comment after numbers */
-/* { dg-final { scan-assembler "\\.long\[ \\t\]+___CFConstantStringClassReference\n\[ \\t\]*\\.long\[ \\t\]+1992.*\n\[ \\t\]*\\.long\[ \\t\]+LC.*\n\[ \\t\]*\\.long\[ \\t\]+4.*\n" } } */
-/* { dg-final { scan-assembler "\\.long\[ \\t\]+___CFConstantStringClassReference\n\[ \\t\]*\\.long\[ \\t\]+1992.*\n\[ \\t\]*\\.long\[ \\t\]+LC.*\n\[ \\t\]*\\.long\[ \\t\]+10.*\n" } } */
-/* LLVM LOCAL end */
+/* { dg-final { scan-assembler "\\.long\[ \\t\]+___CFConstantStringClassReference\n\[ \\t\]*\\.long\[ \\t\]+1992\n\[ \\t\]*\\.long\[ \\t\]+LC.*\n\[ \\t\]*\\.long\[ \\t\]+4\n" } } */
+/* { dg-final { scan-assembler "\\.long\[ \\t\]+___CFConstantStringClassReference\n\[ \\t\]*\\.long\[ \\t\]+1992\n\[ \\t\]*\\.long\[ \\t\]+LC.*\n\[ \\t\]*\\.long\[ \\t\]+10\n" } } */

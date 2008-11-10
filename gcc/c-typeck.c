@@ -76,6 +76,9 @@ static int require_constant_value;
 static int require_constant_elements;
 
 /* APPLE LOCAL begin radar 5732232 - blocks (C++ cm) */
+/* APPLE LOCAL begin radar 5811943 - Fix type of pointers to Blocks  */
+/* Move declaration of invoke_impl_ptr_type to c-common.c  */
+/* APPLE LOCAL end radar 5811943 - Fix type of pointers to Blocks  */
 static bool types_are_block_compatible (tree lhptee, tree rhptee);
 static tree build_block_call (tree, tree, tree);
 /* APPLE LOCAL end radar 5732232 - blocks (C++ cm) */
@@ -2192,7 +2195,9 @@ build_external_ref (tree id, int fun, location_t loc)
 		   (DECL_EXTERNAL (decl) || TREE_STATIC (decl)));
 	  /* Treat all 'global' variables as 'byref' by default. */
           /* APPLE LOCAL begin radar 6014138 (C++ ci) */
-	  if (gdecl || (TREE_CODE (decl) == VAR_DECL && COPYABLE_BYREF_LOCAL_VAR (decl)))
+	  if (building_block_byref_decl || gdecl 
+              || (TREE_CODE (decl) == VAR_DECL 
+                  && COPYABLE_BYREF_LOCAL_VAR (decl)))
           /* APPLE LOCAL end radar 6014138 (C++ ci) */
 	    {
 	      /* APPLE LOCAL begin radar 5803600 (C++ ci) */
@@ -3687,8 +3692,8 @@ build_conditional_expr (tree ifexp, tree op1, tree op2)
 	}
       /* APPLE LOCAL begin 4154928 */
       /* Objective-C pointer comparisons are a bit more lenient.  */
-      /* APPLE LOCAL radar 4229905 - radar 6231433 */
-      else if (objc_have_common_type (type1, type2, -3, NULL_TREE, "conditional expression"))
+      /* APPLE LOCAL radar 4229905 */
+      else if (objc_have_common_type (type1, type2, -3, NULL_TREE))
 	result_type = objc_common_type (type1, type2);
       /* APPLE LOCAL end 4154928 */
       else
@@ -4071,40 +4076,39 @@ types_are_block_compatible (tree lhptee, tree rhptee)
   return false;
 }
 
-/* APPLE LOCAL begin radar 5847213 - radar 6329245 */
 /**
  build_block_call - Routine to build a block call; as in:
-  ((double(*)(void *, int))(BLOCK_PTR_EXP->__FuncPtr))(I, 42);
+  ((double(*)(struct invok_impl *, int))(BLOCK_PTR_VAR->FuncPtr))(I, 42);
  FNTYPE is the original function type derived from the syntax.
- BLOCK_PTR_EXP is the block pointer variable.
+ FUNCTION is the4 block pointer variable.
  PARAMS is the parameter list.
 */
 static tree
-build_block_call (tree fntype, tree block_ptr_exp, tree params)
+build_block_call (tree fntype, tree function, tree params)
 {
+  tree block_ptr_exp;
   tree function_ptr_exp;
   tree typelist;
 
-  /* First convert BLOCK_PTR_EXP to 'void *'. */
-  block_ptr_exp = convert (ptr_type_node, block_ptr_exp);
-  gcc_assert (generic_block_literal_struct_type);
-  block_ptr_exp = convert (build_pointer_type (generic_block_literal_struct_type),
-			   block_ptr_exp);
-  /* BLOCK_PTR_VAR->__FuncPtr */
-  function_ptr_exp = build_component_ref (build_indirect_ref (block_ptr_exp, "->"),
-					  get_identifier ("__FuncPtr"));
-  gcc_assert (function_ptr_exp);
+  /* (struct invok_impl *)BLOCK_PTR_VAR */
+  /* First convert it to 'void *'. */
+  block_ptr_exp = convert (ptr_type_node, function);
+  gcc_assert (invoke_impl_ptr_type);
+  block_ptr_exp = convert (invoke_impl_ptr_type, block_ptr_exp);
+  params = tree_cons (NULL_TREE, block_ptr_exp, params);
+  /* BLOCK_PTR_VAR->FuncPtr */
+  function_ptr_exp =
+    build_component_ref (build_indirect_ref (block_ptr_exp, "->"),
+                         get_identifier ("FuncPtr"));
 
-  /* Build: result_type(*)(void *, function-arg-type-list) */
+  /* Build: result_type(*)(struct invok_impl *, function-arg-type-list) */
   typelist = TYPE_ARG_TYPES (fntype);
-  typelist = tree_cons (NULL_TREE, ptr_type_node, typelist);
+  typelist = tree_cons (NULL_TREE, invoke_impl_ptr_type, typelist);
   fntype = build_function_type (TREE_TYPE (fntype), typelist);
   function_ptr_exp = convert (build_pointer_type (fntype), function_ptr_exp);
-  params = tree_cons (NULL_TREE, block_ptr_exp, params);
   return fold_build3 (CALL_EXPR, TREE_TYPE (fntype),
                       function_ptr_exp, params, NULL_TREE);
 }
-/* APPLE LOCAL end radar 5847213 - radar 6329245 */
 /* APPLE LOCAL end radar 5732232 - blocks (C++ cm) */
 
 /* Interpret a cast of expression EXPR to type TYPE.  */
@@ -4346,8 +4350,7 @@ convert_for_assignment (tree type, tree rhs, enum impl_conv errtype,
 	  break;
 	}
 
-      /* APPLE LOCAL radar 6231433 */
-      objc_ok = objc_compare_types (type, rhstype, parmno, rname, "comparison");
+      objc_ok = objc_compare_types (type, rhstype, parmno, rname);
     }
 
   if (TYPE_MAIN_VARIANT (type) == TYPE_MAIN_VARIANT (rhstype))
@@ -5257,8 +5260,7 @@ digest_init (tree type, tree init, bool strict_string, int require_constant)
 	  /* APPLE LOCAL begin radar 4293709 */
           if (c_dialect_objc ())
 	    (void)objc_compare_types (type, TREE_TYPE (inside_init), 
-				      /* APPLE LOCAL radar 6231433 */
-				      -2/* init */, NULL_TREE, NULL);
+				      -2/* init */, NULL_TREE);
 	  /* APPLE LOCAL end radar 4293709 */
 	}
 
@@ -7541,7 +7543,8 @@ c_finish_goto_label (tree label)
       nlist->label = decl;
       label_context_stack_vm->labels_used = nlist;
     }
-
+  /* APPLE LOCAL radar 6083129 - byref escapes (C++ cp) */
+  diagnose_byref_var_in_current_scope ();
   TREE_USED (decl) = 1;
   return add_stmt (build1 (GOTO_EXPR, void_type_node, decl));
 }
@@ -7872,7 +7875,8 @@ c_finish_return (tree retval)
 
       retval = build2 (MODIFY_EXPR, TREE_TYPE (res), res, t);
     }
-
+  /* APPLE LOCAL radar 6083129 - byref escapes (C++ cp) */
+  release_all_local_byrefs_at_return ();
   ret_stmt = build_stmt (RETURN_EXPR, retval);
   TREE_NO_WARNING (ret_stmt) |= no_warning;
   return add_stmt (ret_stmt);
@@ -8218,6 +8222,11 @@ c_finish_bc_stmt (tree *label_p, bool is_break)
 
   if (skip)
     return NULL_TREE;
+  /* APPLE LOCAL begin radar 6083129 - byref escapes (C++ cp) */
+  /* Before breaking out or on continue, release all local __byref
+     variables which go out of scope. */
+  release_local_byrefs_at_break ();
+  /* APPLE LOCAL end radar 6083129 - byref escapes  (C++ cp) */
 
   return add_stmt (build1 (GOTO_EXPR, void_type_node, label));
 }
@@ -8679,8 +8688,7 @@ build_binary_op (enum tree_code code, tree orig_op0, tree orig_op1,
       return error_mark_node;
     }
 
-  /* APPLE LOCAL radar 6231433 */
-  objc_ok = objc_compare_types (type0, type1, -3, NULL_TREE, "comparison");
+  objc_ok = objc_compare_types (type0, type1, -3, NULL_TREE);
 
   switch (code)
     {

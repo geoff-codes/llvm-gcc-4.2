@@ -4,8 +4,6 @@
 /* { dg-do compile } */
 /* { dg-skip-if "No stabs" { mmix-*-* *-*-aix* *-*-netware* alpha*-*-* hppa*64*-*-* ia64-*-* *-*-sysv5* } { "*" } { "" } } */
 /* { dg-options "-gstabs" } */
-/* LLVM LOCAL llvm doesn't currently support stabs. */
-/* { dg-require-stabs "" } */
 
 int
 main ()

@@ -2,7 +2,6 @@
 /* local statics need be treated same as file static (byref). */
 /* { dg-options "-mmacosx-version-min=10.6" { target *-*-darwin* } } */
 /* { dg-do run } */
-/* { dg-skip-if "" { powerpc*-*-darwin* } { "-m64" } { "" } } */
 
 #include <stdio.h>
 

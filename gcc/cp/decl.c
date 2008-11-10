@@ -2465,6 +2465,39 @@ check_switch_goto (struct cp_binding_level* level)
   return check_previous_goto_1 (NULL_TREE, level, level->names, false, NULL);
 }
 
+/* APPLE LOCAL begin blocks 6040305 (cp) */
+/* This routine issues a diagnostic if a __block variable is seen in
+   the current scope.  This is for now called from a goto statement.  */
+void
+diagnose_byref_var_in_current_scope (void)
+{
+#if 0
+  /* FIXME finish this off. */
+  struct c_scope *scope;
+  struct c_binding *b;
+
+  gcc_assert (current_scope);
+  if (flag_objc_gc_only || !current_scope->byref_in_current_scope)
+    return;
+
+  scope = current_scope;
+  while (scope && scope != file_scope)
+  {
+    for (b = scope->bindings; b; b = b->prev)
+    {
+      tree p = b->decl;
+      if (p && TREE_CODE (p) == VAR_DECL && COPYABLE_BYREF_LOCAL_VAR (p)) {
+        error ("local byref variable %s is in the scope of this goto",
+               IDENTIFIER_POINTER (DECL_NAME (p)));
+        return;
+      }
+    }
+    scope = scope->outer;
+  }
+#endif
+}
+/* APPLE LOCAL end blocks 6040305 (cp) */
+
 /* Check that a new jump to a label DECL is OK.  Called by
    finish_goto_stmt.  */
 
@@ -2474,6 +2507,10 @@ check_goto (tree decl)
   struct named_label_entry *ent, dummy;
   bool saw_catch = false, identified = false;
   tree bad;
+
+  /* APPLE LOCAL begin 6040305 */
+  diagnose_byref_var_in_current_scope ();
+  /* APPLE LOCAL end 6040305 */
 
   /* We can't know where a computed goto is jumping.
      So we assume that it's OK.  */
@@ -5114,15 +5151,10 @@ make_rtl_for_nonlocal_decl (tree decl, tree init, const char* asmspec)
   if (DECL_LANG_SPECIFIC (decl) && DECL_IN_AGGR_P (decl))
     {
       gcc_assert (TREE_STATIC (decl));
-      /* APPLE LOCAL begin templated static data 6298605 */
       /* An in-class declaration of a static data member should be
-	 external if the decl is accessible from outside this
-	 translation unit (eg something not in an anonymous
-	 namespace); it is only a declaration, and not a
-	 definition.  */
-      if (init == NULL_TREE && TREE_PUBLIC (decl))
+	 external; it is only a declaration, and not a definition.  */
+      if (init == NULL_TREE)
 	gcc_assert (DECL_EXTERNAL (decl));
-      /* APPLE LOCAL end templated static data 6298605 */
     }
 
   /* We don't create any RTL for local variables.  */
@@ -5457,12 +5489,12 @@ block_finish_struct (tree t, tree fieldlist)
 
   struct __Block_byref_x {
     // APPLE LOCAL radar 6244520
-    void *__isa;			// NULL for everything except __weak pointers
-    struct Block_byref_x *__forwarding;
-    int32_t __flags;
-    int32_t __size;
-    void *__ByrefKeepFuncPtr;    // Only if variable is __block ObjC object
-    void *__ByrefDestroyFuncPtr; // Only if variable is __block ObjC object
+    void *isa;			// NULL for everything except __weak pointers
+    struct Block_byref_x *forwarding;
+    int32_t flags;
+    int32_t size;
+    void *ByrefKeepFuncPtr;    // Only if variable is __byref ObjC object
+    void *ByrefDestroyFuncPtr; // Only if variable is __byref ObjC object
     typex x;
   } x;
 */
@@ -5486,36 +5518,36 @@ new_block_byref_decl (tree decl)
   Block_byref_type = block_start_struct (get_identifier (string));
   
   /* APPLE LOCAL begin radar 6244520 */
-  /* void *__isa; */
-  field = build_decl (FIELD_DECL, get_identifier ("__isa"), ptr_type_node);
+  /* void *isa; */
+  field = build_decl (FIELD_DECL, get_identifier ("isa"), ptr_type_node);
   fields = field;
   /* APPLE LOCAL end radar 6244520 */  
 
-  /* struct Block_byref_x *__forwarding; */
-  field = build_decl (FIELD_DECL, get_identifier ("__forwarding"),
+  /* struct Block_byref_x *forwarding; */
+  field = build_decl (FIELD_DECL, get_identifier ("forwarding"),
                       build_pointer_type (Block_byref_type));
   /* APPLE LOCAL radar 6244520 */
   chainon (fields, field);
 
-  /* int32_t __flags; */
-  field = build_decl (FIELD_DECL, get_identifier ("__flags"),
+  /* int32_t flags; */
+  field = build_decl (FIELD_DECL, get_identifier ("flags"),
                       unsigned_type_node);
   chainon (fields, field);
 
-  /* int32_t __size; */
-  field = build_decl (FIELD_DECL, get_identifier ("__size"),
+  /* int32_t size; */
+  field = build_decl (FIELD_DECL, get_identifier ("size"),
                       unsigned_type_node);
   chainon (fields, field);
 
   if (COPYABLE_BYREF_LOCAL_NONPOD (decl))
   {
-    /* void *__ByrefKeepFuncPtr; */
-    field = build_decl (FIELD_DECL, get_identifier ("__ByrefKeepFuncPtr"),
+    /* void *ByrefKeepFuncPtr; */
+    field = build_decl (FIELD_DECL, get_identifier ("ByrefKeepFuncPtr"),
                         ptr_type_node);
     chainon (fields, field);
 
-    /* void *__ByrefDestroyFuncPtr; */
-    field = build_decl (FIELD_DECL, get_identifier ("__ByrefDestroyFuncPtr"),
+    /* void *ByrefDestroyFuncPtr; */
+    field = build_decl (FIELD_DECL, get_identifier ("ByrefDestroyFuncPtr"),
                         ptr_type_node);
     chainon (fields, field);
   }
@@ -5543,7 +5575,7 @@ new_block_byref_decl (tree decl)
    { NULL, &x, 0, sizeof(struct __Block_byref_x)};
    when INIT is NULL_TREE
 
-   For __block ObjC objects, it also adds "byref_keep" and "byref_destroy"
+   For __byref ObjC objects, it also adds "byref_keep" and "byref_destroy"
    Funtion pointers. So the most general initializers would be:
 
    { NULL, &x, 0, sizeof(struct __Block_byref_x), &byref_keep, &byref_destroy,
@@ -5780,7 +5812,7 @@ cp_finish_decl (tree decl, tree init, bool init_const_expr_p,
         if (DECL_EXTERNAL (decl) || TREE_STATIC (decl))
         {
 	    warning (0,
-		     "__block attribute is only allowed on local variables - ignored");
+		     "__byref attribute is only allowed on local variables - ignored");
 	    COPYABLE_BYREF_LOCAL_VAR (decl) = 0;
 	    COPYABLE_BYREF_LOCAL_NONPOD (decl) = 0;
 	  }
@@ -11517,82 +11549,6 @@ start_preparsed_function (tree decl1, tree attrs, int flags)
 }
 
 
-/* APPLE LOCAL begin warn missing prototype 6261539 */
-static bool
-fn_previously_found (tree decl, tree olddecl)
-{
-  int types_match;
-
-  if (olddecl == 0)
-    return false;
-
-  if (TREE_CODE (olddecl) == OVERLOAD)
-    {
-      if (OVL_CHAIN (olddecl) == NULL_TREE)
-	olddecl = OVL_CURRENT (olddecl);
-      else
-	{
-	  tree match;
-	  for (match = olddecl; match; match = OVL_NEXT (match))
-	    {
-	      if (fn_previously_found (decl, OVL_CURRENT (match)))
-		return true;
-	    }
-	  return false;
-	}
-    }	  
-
-  /* Don't warn about previously erroneous things that have the same
-     name.  */
-  if (TREE_TYPE (olddecl) == error_mark_node)
-    return true;
-
-  /* Internally defined things still need a prototype to escape the
-     warning.  */
-  if (DECL_ARTIFICIAL (olddecl))
-    return false;
-
-  if (TREE_CODE (olddecl) != FUNCTION_DECL)
-    return false;
-
-  /* These will match or error, don't also spew prototype warnings.  */
-  if (DECL_EXTERN_C_P (olddecl)
-      && DECL_EXTERN_C_P (decl))
-    return true;
-
-  /* These will match or error, don't also spew prototype warnings.  */
-  if (compparms (TYPE_ARG_TYPES (TREE_TYPE (decl)),
-		 TYPE_ARG_TYPES (TREE_TYPE (olddecl))))
-    return true;
-
-  types_match = decls_match (decl, olddecl);
-    
-  if (types_match)
-    return true;
-
-  return false;
-}
-
-inline static void
-check_missing_prototype (tree decl)
-{
-  if (warn_missing_prototypes
-      && namespace_bindings_p ()
-      && TREE_PUBLIC (decl)
-      && !DECL_MAIN_P (decl)
-      && DECL_NON_THUNK_FUNCTION_P (decl)
-      && ! DECL_FUNCTION_MEMBER_P (decl)
-      && DECL_NAMESPACE_SCOPE_P (decl)
-      && ! decl_anon_ns_mem_p (decl)
-      && ! DECL_DECLARED_INLINE_P (decl))
-    {
-      tree olddecl = namespace_binding (DECL_NAME (decl),  DECL_CONTEXT (decl));
-      if (!fn_previously_found (decl, olddecl))
-	warning (OPT_Wmissing_prototypes, "no previous prototype for %q+D", decl);
-    }
-}
-/* APPLE LOCAL end warn missing prototype 6261539 */
-
 /* Like start_preparsed_function, except that instead of a
    FUNCTION_DECL, this function takes DECLSPECS and DECLARATOR.
 
@@ -11624,10 +11580,6 @@ start_function (cp_decl_specifier_seq *declspecs,
        (and issued a diagnostic) if the user got it wrong.  */
     gcc_assert (same_type_p (TREE_TYPE (TREE_TYPE (decl1)),
 			     integer_type_node));
-
-  /* APPLE LOCAL begin warn missing prototype 6261539 */
-  check_missing_prototype (decl1);
-  /* APPLE LOCAL end warn missing prototype 6261539 */
 
   start_preparsed_function (decl1, attrs, /*flags=*/SF_DEFAULT);
 

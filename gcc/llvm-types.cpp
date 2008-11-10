@@ -1021,12 +1021,6 @@ namespace {
     void HandleByValArgument(const llvm::Type *LLVMTy, tree type) {
       HandleScalarArgument(PointerType::getUnqual(LLVMTy), type);
     }
-
-    /// HandleFCAArgument - This callback is invoked if the aggregate function
-    /// argument is a first class aggregate passed by value.
-    void HandleFCAArgument(const llvm::Type *LLVMTy, tree type) {
-      ArgTypes.push_back(LLVMTy);
-    }
   };
 }
 
@@ -1425,22 +1419,10 @@ struct StructTypeConversionInfo {
       SavedTy = Elements.back();
       if (ElementOffsetInBytes.back()+ElementSizeInBytes.back() > ByteOffset) {
         // The last element overlapped with this one, remove it.
-        uint64_t PoppedOffset = ElementOffsetInBytes.back();
         Elements.pop_back();
         ElementOffsetInBytes.pop_back();
         ElementSizeInBytes.pop_back();
         PaddingElement.pop_back();
-        uint64_t EndOffset = getNewElementByteOffset(1);
-        if (EndOffset < PoppedOffset) {
-          // Make sure that some field starts at the position of the
-          // field we just popped.  Otherwise we might end up with a
-          // gcc non-bitfield being mapped to an LLVM field with a
-          // different offset.
-          const Type *Pad = Type::Int8Ty;
-          if (PoppedOffset != EndOffset + 1)
-            Pad = ArrayType::get(Pad, PoppedOffset - EndOffset);
-          addElement(Pad, EndOffset, PoppedOffset - EndOffset);
-        }
       }
     }
 
@@ -1553,22 +1535,22 @@ struct StructTypeConversionInfo {
     // Handle zero sized fields now.
 
     // Skip over LLVM fields that start and end before the GCC field starts.
-    // Such fields are always nonzero sized, and we don't want to skip past
+    // Such fields are always nonzero sized, and we don't want to skip past 
     // zero sized ones as well, which happens if you use only the Offset
     // comparison.
     while (CurFieldNo < ElementOffsetInBytes.size() &&
-           getFieldEndOffsetInBytes(CurFieldNo)*8 <
-           FieldOffsetInBits + (ElementSizeInBytes[CurFieldNo] != 0))
+           getFieldEndOffsetInBytes(CurFieldNo)*8 <= FieldOffsetInBits &&
+           ElementSizeInBytes[CurFieldNo] != 0)
       ++CurFieldNo;
 
-    // If the next field is zero sized, advance past this one.  This is a nicety
-    // that causes us to assign C fields different LLVM fields in cases like
+    // If the next field is zero sized, advance past this one.  This is a nicety 
+    // that causes us to assign C fields different LLVM fields in cases like 
     // struct X {}; struct Y { struct X a, b, c };
     if (CurFieldNo+1 < ElementOffsetInBytes.size() &&
         ElementSizeInBytes[CurFieldNo+1] == 0) {
       return CurFieldNo++;
     }
-
+    
     // Otherwise, if this is a zero sized field, return it.
     if (CurFieldNo < ElementOffsetInBytes.size() &&
         ElementSizeInBytes[CurFieldNo] == 0) {
@@ -2144,10 +2126,6 @@ const Type *TypeConverter::ConvertRECORD(tree type, tree orig_type) {
       unsigned FieldNo =
         Info->getLLVMFieldFor(FieldOffsetInBits, CurFieldNo, isZeroSizeField);
       SetFieldIndex(Field, FieldNo);
-
-      assert((isBitfield(Field) || FieldNo == ~0U ||
-             FieldOffsetInBits == 8*Info->ElementOffsetInBytes[FieldNo]) &&
-             "Wrong LLVM field offset!");
     }
 
   // Put the original gcc struct back the way it was; necessary to prevent the

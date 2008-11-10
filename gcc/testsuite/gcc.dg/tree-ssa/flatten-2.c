@@ -1,6 +1,5 @@
 /* { dg-do compile } */
-/* LLVM LOCAL explicitly disable inlining */
-/* { dg-options "-O2 -fno-inline-functions" } */
+/* { dg-options -O2 } */
 
 /* Check that we finish compiling even if instructed to
    flatten a cyclic callgraph.  Verify we correctly

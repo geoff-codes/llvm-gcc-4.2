@@ -3,3 +3,4 @@
 # position-independent-code -- the usual default on Darwin.
 
 BOOT_CFLAGS=-g -O2 -mdynamic-no-pic
+

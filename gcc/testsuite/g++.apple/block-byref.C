@@ -4,7 +4,7 @@
 /* { dg-options "-fblocks" } */
 
 int main() {
-	__block int x, y;
+	__byref int x, y;
 	^{ };
 
 	^{ int r; return x+y+r; }; 

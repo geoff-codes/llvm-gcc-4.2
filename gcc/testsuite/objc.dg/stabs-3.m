@@ -5,8 +5,6 @@
 
 /* { dg-do compile { target *-*-darwin* } } */
 /* { dg-options "-gstabs+ -gused" } */
-/* LLVM LOCAL llvm doesn't currently support stabs. */
-/* { dg-require-stabs "" } */
 
 #include <objc/Object.h>
 

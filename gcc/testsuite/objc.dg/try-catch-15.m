@@ -6,7 +6,7 @@
 /* { dg-do compile { target powerpc*-*-darwin* } } */
 
 /* APPLE LOCAL begin radar 4894756 */
-/* { dg-require-effective-target ilp32 } */
+/* { dg-skip-if "" { *-*-darwin* } { "-m64" } { "" } } */
 #include "../objc/execute/Object2.h"
 /* APPLE LOCAL end radar 4894756 */
 

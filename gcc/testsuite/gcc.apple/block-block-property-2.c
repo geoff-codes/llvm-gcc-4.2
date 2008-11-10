@@ -1,4 +1,4 @@
-/* APPLE LOCAL file radar 5831920  - modified for radar 6255671 */
+/* APPLE LOCAL file radar 5831920 */
 #import <Foundation/Foundation.h>
 /* Test a property with block type. */
 /* { dg-do run } */
@@ -12,8 +12,8 @@ int (^getIntCopy)(void);
 int (^getIntRetain)(void);
 
 }
-@property (assign) int (^getIntCopy)(void);
-@property (assign) int (^getIntRetain)(void);
+@property int (^getIntCopy)(void);
+@property int (^getIntRetain)(void);
 @end
 
 @implementation TestObject
@@ -31,9 +31,9 @@ int DoBlock (int (^getIntCopy)(void))
 
 int main(char *argc, char *argv[]) {
     int count;
-    __block int val = 0;
+    int val = 0;
     TestObject *to = [[TestObject alloc] init];
-    to.getIntRetain = ^ { printf("\n Hello(%d)\n", val); return ++val; }; 
+    to.getIntRetain = ^ { | val| printf("\n Hello(%d)\n", val); return ++val; }; /* { dg-warning "has been deprecated in blocks" } */
     to.getIntCopy = to.getIntRetain;
 
     count = DoBlock (to.getIntCopy);

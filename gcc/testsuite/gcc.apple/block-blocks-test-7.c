@@ -12,28 +12,28 @@ void _Block_byref_release(void*src){}
 int i;
 
 int foo() {
-   __block  id FFFFFF;
-   __block  id Q;
-   ^{ FFFFFF = 0; }; 
+   __byref  id FFFFFF;
+   __byref  id Q;
+   ^{ |FFFFFF| FFFFFF = 0; }; /* { dg-warning "has been deprecated in blocks" } */
 
    if (i)
    {
-     __block  id FFFFFF;
-     __block  id Q;
-     ^{ FFFFFF = 0; }; 
+     __byref  id FFFFFF;
+     __byref  id Q;
+     ^{ |FFFFFF| FFFFFF = 0; }; /* { dg-warning "has been deprecated in blocks" } */
    }
 }
 
 int main() {
-   __block  id X;
-   __block  id X1;
-   ^{ X = 0; }; 
+   __byref  id X;
+   __byref  id X1;
+   ^{ |X| X = 0; }; /* { dg-warning "has been deprecated in blocks" } */
 
    if (i)
    {
-     __block  id X;
-     __block  id X1;
-     ^{ X = 0; }; 
+     __byref  id X;
+     __byref  id X1;
+     ^{ |X| X = 0; }; /* { dg-warning "has been deprecated in blocks" } */
    }
    return 0;
 }

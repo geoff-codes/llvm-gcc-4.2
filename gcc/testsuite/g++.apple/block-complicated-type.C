@@ -15,8 +15,6 @@ int (^func(int x))(char, int) {
 int (^(^block)(double x))(char, short);
 
 void foo() {
-   int one = 1;
-   /* APPLE LOCAL radar 6230297 */
-   block = ^(double x){ return ^(char c, short y) { return one + (int)c + y; };}; /* { dg-error "returning block that lives on the local stack" } */
+   block = ^(double x){ return ^(char c, short y) { return (int)c + y; };}; /* { dg-error "returning block that lives on the local stack" } */
 }
 

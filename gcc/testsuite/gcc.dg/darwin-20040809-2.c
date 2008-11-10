@@ -3,8 +3,6 @@
 
 /* { dg-do compile { target *-*-darwin* } } */
 /* { dg-options "-gstabs+ -fno-eliminate-unused-debug-symbols" } */
-/* LLVM LOCAL llvm doesn't currently support stabs. */
-/* { dg-require-stabs "" } */
 
 int
 main ()

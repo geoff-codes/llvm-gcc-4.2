@@ -120,8 +120,11 @@ control_flow_insn_p (rtx insn)
 	      || can_throw_internal (insn));
 
     case INSN:
-      /* APPLE LOCAL begin deletion 6258941 */
-      /* APPLE LOCAL end deletion 6258941 */
+      /* Treat trap instructions like noreturn calls (same provision).  */
+      if (GET_CODE (PATTERN (insn)) == TRAP_IF
+	  && XEXP (PATTERN (insn), 0) == const1_rtx)
+	return true;
+
       return (flag_non_call_exceptions && can_throw_internal (insn));
 
     case BARRIER:

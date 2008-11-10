@@ -1,4 +1,4 @@
-/* APPLE LOCAL file radar 6214617 - modified for radar 5847213 */
+/* APPLE LOCAL file radar 6214617 */
 /* { dg-options "-mmacosx-version-min=10.5 -ObjC++" { target *-*-darwin* } } */
 /* { dg-do run } */
 
@@ -57,24 +57,16 @@ TestObject& TestObject::operator=(CONST TestObject& inObj)
 }
 
 void hack(void *block) {
-    /* APPLE LOCAL begin radar 6329245 */
     // check flags to see if constructor/destructor is available;
     struct myblock {
         void *isa;
         int flags;
-	int reserved;
-        void (*Block_invoke)(void *);
-        struct Block_descriptor_1 {
-        unsigned long int reserved;     // NULL
-        unsigned long int Block_size;  // sizeof(struct Block_literal_1)
-
-        // optional helper functions
-        void (*copyhelper)(void *dst, void *src);
-        void (*disposehelper)(void *src);
-        } *descriptor;
+        int refcount;
+        void *invokeptr;
+        void (*copyhelper)(struct myblock *dst, struct myblock *src);
+        void (*disposehelper)(struct myblock *src);
         long space[32];
     } myversion, *mbp = (struct myblock *)block;
-    /* APPLE LOCAL end radar 6329245 */
     printf("flags -> %x\n", mbp->flags);
     if (! ((1<<25) & mbp->flags)) {
         printf("no copy/dispose helper functions provided!\n");
@@ -84,16 +76,16 @@ void hack(void *block) {
         printf("no marking for ctor/dtors present!\n");
         exit(1);
     }
-    printf("copyhelper -> %p\n", mbp->descriptor->copyhelper);
+    printf("copyhelper -> %p\n", mbp->copyhelper);
     // simulate copy
-    mbp->descriptor->copyhelper(&myversion, mbp);
+    mbp->copyhelper(&myversion, mbp);
     if (constructors != 3) {
         printf("copy helper didn't do the constructor part\n");
         exit(1);
     }
-    printf("disposehelper -> %p\n", mbp->descriptor->disposehelper);
+    printf("disposehelper -> %p\n", mbp->disposehelper);
     // simulate destroy
-    mbp->descriptor->disposehelper(&myversion);
+    mbp->disposehelper(&myversion);
     if (destructors != 1) {
         printf("dispose helper didn't do the dispose\n");
         exit(1);

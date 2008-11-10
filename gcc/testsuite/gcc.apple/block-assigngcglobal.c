@@ -28,8 +28,8 @@ void (^GlobalVoidVoid)(void);
 
 
 int main(char *argc, char *argv[]) {
-   __block int i = 0;
+   int i = 0;
    // assigning a Block into a global should elicit a global write-barrier under GC
-   GlobalVoidVoid = ^ {  ++i; }; 
+   GlobalVoidVoid = ^ { | i | ++i; }; /* { dg-warning "has been deprecated in blocks" } */
    return GlobalInt - 1;
 }

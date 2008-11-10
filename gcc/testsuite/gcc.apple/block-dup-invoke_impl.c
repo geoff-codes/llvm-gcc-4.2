@@ -23,13 +23,13 @@ double test(myblock I) {
 }
 
 int main() {
-  __block enum numbers x = one;
-  __block enum numbers y = two;
+  enum numbers x = one;
+  enum numbers y = two;
 
   myblock CL = ^(enum numbers z)
-		{y = z; 
+		{|y| y = z; /* { dg-warning "has been deprecated in blocks" } */
 		 test (
-		 ^ (enum numbers z) { 
+		 ^ (enum numbers z) { |x| /* { dg-warning "has been deprecated in blocks" } */
 		   x = z;
 		   return (enum numbers) four;
 		  }

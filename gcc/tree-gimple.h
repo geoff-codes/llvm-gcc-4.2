@@ -140,8 +140,7 @@ extern void diagnose_omp_structured_block_errors (tree);
 extern tree omp_reduction_init (tree, tree);
 
 /* In tree-nested.c.  */
-/* APPLE LOCAL radar 6305545 */
-extern void lower_nested_functions (tree, bool);
+extern void lower_nested_functions (tree);
 extern void insert_field_into_struct (tree, tree);
 
 /* Convenience routines to walk all statements of a gimple function.

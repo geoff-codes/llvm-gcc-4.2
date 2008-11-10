@@ -45,10 +45,10 @@ id objc_assign_strongCast(id val, id *dest) {
 
 
 int main(char *argc, char *argv[]) {
-   __block int i = 0;
+   int i = 0;
    TestObject *to = [[TestObject alloc] init];
    // assigning a Block into an ivar should elicit a  write-barrier under GC
-   to->ivarBlock =  ^ { ++i; };		// fails to gen write-barrier  
+   to->ivarBlock =  ^ { | i | ++i; };		// fails to gen write-barrier  /* { dg-warning "has been deprecated in blocks" } */
    //to->x = to;				// gens write-barrier
    return GlobalInt - 1;
 }

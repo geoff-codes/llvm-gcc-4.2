@@ -5,8 +5,6 @@
 
 /* { dg-do compile { target *-*-darwin* } } */
 /* { dg-options "-gstabs+ -gfull" } */
-/* LLVM LOCAL llvm doesn't currently support stabs. */
-/* { dg-require-stabs "" } */
 
 /* APPLE LOCAL radar 4894756 */
 #include "../objc/execute/Object2.h"

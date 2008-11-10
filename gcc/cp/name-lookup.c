@@ -4039,13 +4039,8 @@ lookup_name_real (tree name, int prefer_type, int nonclass, bool block_p,
 
 	if (binding)
 	  {
-	    /* APPLE LOCAL begin 6322334 */
-	    /* Ick, we don't want to find a hidden friend inside a
-	       local class!  */ 
-	    if (hidden_name_p (binding))
-	      POP_TIMEVAR_AND_RETURN (TV_NAME_LOOKUP, NULL_TREE);
-	    /* APPLE LOCAL end 6322334 */
-
+	    /* Only namespace-scope bindings can be hidden.  */
+	    gcc_assert (!hidden_name_p (binding));
 	    val = binding;
 	    break;
 	  }

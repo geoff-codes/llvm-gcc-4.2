@@ -5,8 +5,8 @@
 
 int main()
 {
-	__block int i = 1;
-	^ { i = 1; return i; }; 
+	int i = 1;
+	^ { |i| i = 1; return i; }; /* { dg-warning "has been deprecated in blocks" } */
 	return 0;
 }
 

@@ -1,6 +1,5 @@
 // { dg-do compile { target *-*-darwin* } }
-// LLVM LOCAL adjust for different syntax
-// { dg-final { scan-assembler "GCC_except_table" } }
+// { dg-final { scan-assembler "GCC_except_table0" } }
 void needed();
 void unneeded();
 

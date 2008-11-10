@@ -1,5 +1,5 @@
 /* { dg-do compile { target i?86*-*-darwin* } } */
-/* { dg-require-effective-target ilp32 } */
+/* { dg-skip-if "" { *-*-darwin* } { "-m64" } { "" } } */
 /* { dg-options { -fasm-blocks -msse3 -mdynamic-no-pic } } */
 /* { dg-final { scan-assembler "movq _packedw1.*, %mm0" } } */
 /* Radar 4515069 */

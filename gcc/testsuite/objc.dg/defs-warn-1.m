@@ -2,7 +2,7 @@
 /* Issue warning wherevr @defs is used. */
 /* { dg-options "-lobjc -Wobjc2" } */
 /* { dg-do run { target powerpc*-*-darwin* i?86*-*-darwin* } } */
-/* { dg-require-effective-target ilp32 } */
+/* { dg-skip-if "" { *-*-darwin* } { "-m64" } { "" } } */
 
 #include <objc/objc.h>
 #include <objc/Object.h>

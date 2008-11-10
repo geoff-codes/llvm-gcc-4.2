@@ -3,7 +3,7 @@
    all uncaught exceptions.  */
 
 /* { dg-options "-fobjc-exceptions" } */
-/* { dg-require-effective-target ilp32 } */
+/* { dg-skip-if "" { *-*-darwin* } { "-m64" } { "" } } */
 /* { dg-do run } */
 
 extern "C" void abort (void);

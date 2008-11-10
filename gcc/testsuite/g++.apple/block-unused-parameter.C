@@ -5,7 +5,7 @@
 
 int main()
 {
-	__block int i = 1;
+	__byref int i = 1;
 	^ { i = 1; return i; }; 
 	return 0;
 }

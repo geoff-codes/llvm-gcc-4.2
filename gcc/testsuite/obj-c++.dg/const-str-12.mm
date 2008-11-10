@@ -4,7 +4,7 @@
 
 /* { dg-options "-fno-constant-cfstrings -fconstant-string-class=Foo" } */
 /* { dg-do compile { target *-*-darwin* } } */
-/* { dg-require-effective-target ilp32 } */
+/* { dg-skip-if "" { *-*-darwin* } { "-m64" } { "" } } */
 
 #include <objc/Object.h>
 

@@ -4,7 +4,7 @@
 /* APPLE LOCAL ARM objc2 */
 /* { dg-do compile { target powerpc*-*-darwin* i?86*-*-darwin* } } */
 /* APPLE LOCAL radar 4894756 */
-/* { dg-require-effective-target ilp32 } */
+/* { dg-skip-if "" { *-*-darwin* } { "-m64" } { "" } } */
 
 #include <objc/objc.h>
 #include <objc/Object.h>

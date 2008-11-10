@@ -1,6 +1,6 @@
 /* APPLE LOCAL file 4115609 */
 /* { dg-do compile { target i?86-*-darwin* } } */
-/* { dg-require-effective-target ilp32 } */
+/* { dg-skip-if "" { i?86-*-darwin* } { "-m64" } { "" } } */
 /* { dg-options "-O3 -mdynamic-no-pic -fomit-frame-pointer" } */
 /* { dg-final { scan-assembler-times "movl\t*" 55} } */
 /* { dg-final { scan-assembler-not "sall" } } */

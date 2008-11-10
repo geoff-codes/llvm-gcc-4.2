@@ -5,7 +5,7 @@
 */
 /* { dg-do compile { target powerpc*-*-darwin* i?86*-*-darwin* } } */
 /* { dg-options "-fobjc-exceptions -Os -Wextra -Werror" } */
-/* { dg-require-effective-target ilp32 } */
+/* { dg-skip-if "" { *-*-darwin* } { "-m64" } { "" } } */
  
 struct MyPoint { int x; };
 

@@ -14,12 +14,12 @@ static void _Block_byref_release(void * arg) {
 
 int main() {
   {
-    __block int O1;
+    __byref int O1;
     int p = 0;
     do {
-      __block int I1;
+      __byref int I1;
       do {
-	__block int J1;
+	__byref int J1;
 	if (p == 2)
 	  break;
       } while ( ++p < 3);

@@ -7,25 +7,16 @@
 #include <assert.h>
 //#include <Block_private.h>
 
-/* APPLE LOCAL begin radar 5847213 - radar 6329245 */
 struct Block_basic {
-    void *isa; // initialized to &_NSConcreteStackBlock or &_NSConcreteGlobalBlock
-    int Block_flags;
-    int reserved;
+    void *isa;
+    int Block_flags;  // int32_t
+    int Block_size; // XXX should be packed into Block_flags
     void (*Block_invoke)(void *);
-
-    struct Block_descriptor_1 {
-        unsigned long int reserved;     // NULL
-        unsigned long int Block_size;  // sizeof(struct Block_literal_1)
-
-        // optional helper functions
-        void (*Block_copy)(void *dst, void *src);
-        void (*Block_dispose)(void *src);
-    } *descriptor;
-
-    // imported variables
+    void (*Block_copy)(void *dst, void *src);
+    void (*Block_dispose)(void *);
+    //long params[0];  // generic space for const & byref hidden params, return value, variable on needs of course
 };
-/* APPLE LOCAL end radar 5847213 - radar 6329245 */
+
 
 void
 func(void (^b)(void))
@@ -60,7 +51,6 @@ main(int argc __attribute__((unused)), char *argv[])
 
 	bb = (void *)stage1;
 
-	/* APPLE LOCAL radar 5847213 - radar 6329245 */
 	bbi_addr = (long)bb->Block_invoke;
 	bb_addr = (long)bb;
 

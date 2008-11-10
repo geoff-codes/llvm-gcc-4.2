@@ -5,7 +5,7 @@
 /* APPLE LOCAL file 4149909 */
 /* { dg-options "-fnext-runtime -fno-constant-cfstrings -fconstant-string-class=XStr" } */
 /* { dg-do compile { target powerpc*-*-darwin* i?86*-*-darwin* } } */
-/* { dg-require-effective-target ilp32 } */
+/* { dg-skip-if "" { *-*-darwin* } { "-m64" } { "" } } */
 
 #include <objc/Object.h>
 

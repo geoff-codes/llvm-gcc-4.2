@@ -290,10 +290,8 @@ extern void stringpool_statistics (void);
 
 /* Heuristics.  */
 extern int ggc_min_expand_heuristic (void);
-/* APPLE LOCAL begin retune gc params 6124839 */
-extern int ggc_min_heapsize_heuristic (bool);
-extern void init_ggc_heuristics (bool);
-/* APPLE LOCAL end retune gc params 6124839 */
+extern int ggc_min_heapsize_heuristic (void);
+extern void init_ggc_heuristics (void);
 
 /* Zone collection.  */
 #if defined (GGC_ZONE) && !defined (GENERATOR_FILE)

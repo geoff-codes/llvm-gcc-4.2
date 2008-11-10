@@ -35,8 +35,8 @@ typedef struct {
 
 int main(char *argc, char *argv[]) {
    StructWithBlock_t *swbp = (StructWithBlock_t *)malloc(sizeof(StructWithBlock_t*));
-   __block   int i = 10;
+   int i = 10;
    // assigning a Block into an struct slot should elicit a write-barrier under GC
-   swbp->ivarBlock = ^ { ++i; }; 
+   swbp->ivarBlock = ^ { | i | ++i; }; /* { dg-warning "has been deprecated in blocks" } */
    return GlobalInt - 1;
 }

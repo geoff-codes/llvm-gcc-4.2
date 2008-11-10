@@ -5,7 +5,7 @@
 /* { dg-options "-fnext-runtime -fno-constant-cfstrings" } */
 /* APPLE LOCAL ARM radar 5804096 */
 /* { dg-do compile { target powerpc*-*-darwin* i?86*-*-darwin* } } */
-/* { dg-require-effective-target ilp32 } */
+/* { dg-skip-if "" { *-*-darwin* } { "-m64" } { "" } } */
 
 #include <objc/Object.h>
 

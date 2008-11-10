@@ -1,6 +1,6 @@
 /* APPLE LOCAL file radar 4603883 */
 /* { dg-do compile } */
-/* { dg-require-effective-target ilp32 } */
+/* { dg-skip-if "" { *-*-darwin* } { "-m64" } { "" } } */
 double param[10][10][5000000]; /* { dg-error "size of array 'param' is too large" } */
 void foo ()
 {

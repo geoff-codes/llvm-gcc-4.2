@@ -70,7 +70,6 @@ extern "C" {
 #include "tree-inline.h"
 #include "langhooks.h"
 #include "cgraph.h"
-#include "params.h"
 }
 
 // Non-zero if bytecode from PCH is successfully read.
@@ -163,20 +162,6 @@ void llvm_initialize_backend(void) {
 
   if (flag_limited_precision > 0) {
     std::string Arg("--limit-float-precision="+utostr(flag_limited_precision));
-    ArgStrings.push_back(Arg);
-  }
-
-  if (flag_stack_protect > 0) {
-    std::string Arg;
-
-    if (flag_stack_protect == 1)
-      Arg = "--enable-stack-protector=some";
-    else
-      Arg = "--enable-stack-protector=all";
-
-    ArgStrings.push_back(Arg);
-    Arg = "--stack-protector-buffer-size=" +
-      utostr(PARAM_VALUE(PARAM_SSP_BUFFER_SIZE));
     ArgStrings.push_back(Arg);
   }
 
@@ -484,7 +469,7 @@ static void createOptimizationPasses() {
   } else if (emit_llvm) {
     // Emit an LLVM .ll file to the output.  This is used when passed 
     // -emit-llvm -S to the GCC driver.
-    PerModulePasses->add(createPrintModulePass(AsmOutRawStream));
+    PerModulePasses->add(new PrintModulePass(AsmOutFile));
     HasPerModulePasses = true;
   } else {
     FunctionPassManager *PM;
@@ -589,6 +574,7 @@ static void CreateStructorsList(std::vector<std::pair<Function*, int> > &Tors,
 // llvm_asm_file_end - Finish the .s file.
 void llvm_asm_file_end(void) {
   timevar_push(TV_LLVM_PERFILE);
+  llvm_shutdown_obj X;  // Call llvm_shutdown() on exit.
 
   performLateBackendInitialization();
   createOptimizationPasses();
@@ -668,16 +654,11 @@ void llvm_asm_file_end(void) {
     FILE *asm_intermediate_out_file = fopen(asm_intermediate_out_filename, "w+b");
     AsmIntermediateOutStream = new oFILEstream(asm_intermediate_out_file);
     AsmIntermediateOutFile = new OStream(*AsmIntermediateOutStream);
-    raw_ostream *AsmIntermediateRawOutStream = 
-      new raw_os_ostream(*AsmIntermediateOutStream);
     if (emit_llvm_bc)
       IntermediatePM->add(CreateBitcodeWriterPass(*AsmIntermediateOutStream));
     if (emit_llvm)
-      IntermediatePM->add(createPrintModulePass(AsmIntermediateRawOutStream));
+      IntermediatePM->add(new PrintModulePass(AsmIntermediateOutFile));
     IntermediatePM->run(*TheModule);
-    AsmIntermediateRawOutStream->flush();
-    delete AsmIntermediateRawOutStream;
-    AsmIntermediateRawOutStream = 0;
     AsmIntermediateOutStream->flush();
     fflush(asm_intermediate_out_file);
     delete AsmIntermediateOutStream;
@@ -709,11 +690,6 @@ void llvm_asm_file_end(void) {
   delete AsmOutFile;
   AsmOutFile = 0;
   timevar_pop(TV_LLVM_PERFILE);
-}
-
-// llvm_call_llvm_shutdown - Release LLVM global state.
-void llvm_call_llvm_shutdown(void) {
-  llvm_shutdown();
 }
 
 // llvm_emit_code_for_current_function - Top level interface for emitting a
@@ -822,14 +798,14 @@ void emit_alias_to_llvm(tree decl, tree target, tree target_decl) {
         error ("%J%qD aliased to undefined symbol %qs", decl, decl, AliaseeName);
         timevar_pop(TV_LLVM_GLOBALS);
         return;
-      }
+      } 
     }
   }
-
+  
   GlobalValue::LinkageTypes Linkage;
 
-  // A weak alias has TREE_PUBLIC set but not the other bits.
-  if (DECL_WEAK(decl))
+  // Check for external weak linkage
+  if (DECL_EXTERNAL(decl) && DECL_WEAK(decl))
     Linkage = GlobalValue::WeakLinkage;
   else if (!TREE_PUBLIC(decl))
     Linkage = GlobalValue::InternalLinkage;

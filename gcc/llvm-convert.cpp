@@ -90,13 +90,8 @@ extern enum machine_mode reg_raw_mode[FIRST_PSEUDO_REGISTER];
 static std::vector<Value *> LLVMValues;
 typedef DenseMap<Value *, unsigned> LLVMValuesMapTy;
 static LLVMValuesMapTy LLVMValuesMap;
-
 /// LocalLLVMValueIDs - This is the set of local IDs we have in our mapping,
-/// this allows us to efficiently identify and remove them.  Local IDs are IDs
-/// for values that are local to the current function being processed.  These do
-/// not need to go into the PCH file, but DECL_LLVM still needs a valid index
-/// while converting the function.  Using "Local IDs" allows the IDs for
-/// function-local decls to be recycled after the function is done.
+/// this allows us to efficiently identify and remove them.
 static std::vector<unsigned> LocalLLVMValueIDs;
 
 // Remember the LLVM value for GCC tree node.
@@ -195,7 +190,7 @@ void readLLVMValues() {
     Value *Va = ValuesFromPCH->getOperand(i);
 
     if (!Va) {
-      // If V is empty then insert NULL to represent empty entries.
+      // If V is empty then nsert NULL to represent empty entries.
       LLVMValues.push_back(Va);
       continue;
     }
@@ -247,7 +242,7 @@ void eraseLocalLLVMValues() {
     LocalLLVMValueIDs.pop_back();
     
     if (Value *V = LLVMValues[Idx]) {
-      assert(!isa<Constant>(V) && "Found global value");
+      assert(!isa<Constant>(V) && "Found local value");
       LLVMValuesMap.erase(V);
     }
 
@@ -516,15 +511,6 @@ namespace {
     void HandleByValArgument(const llvm::Type *LLVMTy, tree type) {
       // Should not get here.
       abort();
-    }
-
-    void HandleFCAArgument(const llvm::Type *LLVMTy, tree type) {
-      // Store the FCA argument into alloca.
-      assert(!LocStack.empty());
-      Value *Loc = LocStack.back();
-      Builder.CreateStore(AI, Loc);
-      AI->setName(NameStack.back());
-      ++AI;
     }
 
     void HandleAggregateResultAsScalar(const Type *ScalarTy, unsigned Offset=0){
@@ -896,8 +882,7 @@ Function *TreeToLLVM::EmitFunction() {
       // If this stmt returns an aggregate value (e.g. a call whose result is
       // ignored), create a temporary to receive the value.  Note that we don't
       // do this for MODIFY_EXPRs as an efficiency hack.
-      if (isAggregateTreeType(TREE_TYPE(stmt)) && 
-          TREE_CODE(stmt)!= MODIFY_EXPR && TREE_CODE(stmt)!=INIT_EXPR)
+      if (isAggregateTreeType(TREE_TYPE(stmt)) && TREE_CODE(stmt)!= MODIFY_EXPR)
         DestLoc = CreateTempLoc(ConvertType(TREE_TYPE(stmt)));
 
       Emit(stmt, DestLoc.Ptr ? &DestLoc : NULL);
@@ -918,7 +903,7 @@ Function *TreeToLLVM::EmitFunction() {
 
 Value *TreeToLLVM::Emit(tree exp, const MemRef *DestLoc) {
   assert((isAggregateTreeType(TREE_TYPE(exp)) == (DestLoc != 0) ||
-          TREE_CODE(exp) == MODIFY_EXPR || TREE_CODE(exp) == INIT_EXPR) &&
+          TREE_CODE(exp) == MODIFY_EXPR) &&
          "Didn't pass DestLoc to an aggregate expr, or passed it to scalar!");
   
   Value *Result = 0;
@@ -969,7 +954,6 @@ Value *TreeToLLVM::Emit(tree exp, const MemRef *DestLoc) {
   case OBJ_TYPE_REF:   Result = EmitOBJ_TYPE_REF(exp); break;
   case ADDR_EXPR:      Result = EmitADDR_EXPR(exp); break;
   case CALL_EXPR:      Result = EmitCALL_EXPR(exp, DestLoc); break;
-  case INIT_EXPR:
   case MODIFY_EXPR:    Result = EmitMODIFY_EXPR(exp, DestLoc); break;
   case ASM_EXPR:       Result = EmitASM_EXPR(exp); break;
   case NON_LVALUE_EXPR: Result = Emit(TREE_OPERAND(exp, 0), DestLoc); break;
@@ -1815,8 +1799,7 @@ Value *TreeToLLVM::EmitRETURN_EXPR(tree exp, const MemRef *DestLoc) {
   tree retval = TREE_OPERAND(exp, 0);
 
   assert((!retval || TREE_CODE(retval) == RESULT_DECL ||
-          ((TREE_CODE(retval) == MODIFY_EXPR 
-             || TREE_CODE(retval) == INIT_EXPR) &&
+          (TREE_CODE(retval) == MODIFY_EXPR &&
            TREE_CODE(TREE_OPERAND(retval, 0)) == RESULT_DECL)) &&
          "RETURN_EXPR not gimple!");
 
@@ -2284,7 +2267,7 @@ Value *TreeToLLVM::EmitLoadOfLValue(tree exp, const MemRef *DestLoc) {
     // value out of the specified register.
     return EmitReadOfRegisterVariable(exp, DestLoc);
   }
-
+  
   LValue LV = EmitLV(exp);
   bool isVolatile = TREE_THIS_VOLATILE(exp);
   const Type *Ty = ConvertType(TREE_TYPE(exp));
@@ -2663,14 +2646,6 @@ namespace {
       CallOperands.push_back(Loc);
     }
 
-    /// HandleFCAArgument - This callback is invoked if the aggregate function
-    /// argument is passed as a first class aggregate.
-    void HandleFCAArgument(const llvm::Type *LLVMTy, tree type) {
-      Value *Loc = getAddress();
-      assert(PointerType::getUnqual(LLVMTy) == Loc->getType());
-      CallOperands.push_back(Builder.CreateLoad(Loc));
-    }
-
     /// EnterField - Called when we're about the enter the field of a struct
     /// or union.  FieldNo is the number of the element we are entering in the
     /// LLVM Struct, StructTy is the LLVM type of the struct we are entering.
@@ -2757,17 +2732,12 @@ Value *TreeToLLVM::EmitCallOf(Value *Callee, tree exp, const MemRef *DestLoc,
   // Loop over the arguments, expanding them and adding them to the op list.
   std::vector<const Type*> ScalarArgs;
   for (tree arg = TREE_OPERAND(exp, 1); arg; arg = TREE_CHAIN(arg)) {
-    tree type = TREE_TYPE(TREE_VALUE(arg));
-    const Type *ArgTy = ConvertType(type);
+    const Type *ArgTy = ConvertType(TREE_TYPE(TREE_VALUE(arg)));
 
     // Push the argument.
     if (ArgTy->isSingleValueType()) {
       // A scalar - push the value.
       Client.pushValue(Emit(TREE_VALUE(arg), 0));
-    } else if (LLVM_SHOULD_PASS_AGGREGATE_AS_FCA(type, ArgTy)) {
-      // A first class aggregate - push the value.
-      LValue ArgVal = EmitLV(TREE_VALUE(arg));
-      Client.pushValue(Builder.CreateLoad(ArgVal.Ptr));
     } else {
       // An aggregate - push the address.
       LValue ArgVal = EmitLV(TREE_VALUE(arg));
@@ -2776,7 +2746,8 @@ Value *TreeToLLVM::EmitCallOf(Value *Callee, tree exp, const MemRef *DestLoc,
     }
 
     Attributes Attrs = Attribute::None;
-    ABIConverter.HandleArgument(type, ScalarArgs, &Attrs);
+    ABIConverter.HandleArgument(TREE_TYPE(TREE_VALUE(arg)), ScalarArgs,
+                                &Attrs);
     if (Attrs != Attribute::None)
       PAL = PAL.addAttr(CallOperands.size(), Attrs);
 
@@ -2918,8 +2889,6 @@ void TreeToLLVM::HandleMultiplyDefinedGimpleTemporary(tree Var) {
 }
 
 /// EmitMODIFY_EXPR - Note that MODIFY_EXPRs are rvalues only!
-/// We also handle INIT_EXPRs here; these are built by the C++ FE on rare
-/// occasions, and have slightly different semantics that don't affect us here.
 ///
 Value *TreeToLLVM::EmitMODIFY_EXPR(tree exp, const MemRef *DestLoc) {
   tree lhs = TREE_OPERAND (exp, 0);
@@ -3778,7 +3747,9 @@ Value *TreeToLLVM::EmitEXC_PTR_EXPR(tree exp) {
 Value *TreeToLLVM::EmitFILTER_EXPR(tree exp) {
   CreateExceptionValues();
   // Load exception selector.
-  return Builder.CreateLoad(ExceptionSelectorValue, "eh_select");
+  Value *V = Builder.CreateLoad(ExceptionSelectorValue, "eh_select");
+  // Cast the address to the right pointer type.
+  return BitCastToType(V, ConvertType(TREE_TYPE(exp)));
 }
 
 /// EmitRESX_EXPR - Handle RESX_EXPR.
@@ -5874,7 +5845,7 @@ LValue TreeToLLVM::EmitLV_DECL(tree exp) {
         mark_referenced(ID);
     }
   }
-
+  
   const Type *Ty = ConvertType(TREE_TYPE(exp));
   // If we have "extern void foo", make the global have type {} instead of
   // type void.
@@ -6022,7 +5993,7 @@ LValue TreeToLLVM::EmitLV_COMPONENT_REF(tree exp) {
       const StructLayout *SL = TD.getStructLayout(cast<StructType>(StructTy));
       BitStart -= SL->getElementOffset(MemberIndex) * 8;
     }
-
+    
   } else {
     Value *Offset = Emit(field_offset, 0);
 
@@ -6219,7 +6190,8 @@ LValue TreeToLLVM::EmitLV_EXC_PTR_EXPR(tree exp) {
 
 LValue TreeToLLVM::EmitLV_FILTER_EXPR(tree exp) {
   CreateExceptionValues();
-  return ExceptionSelectorValue;
+  return BitCastToType(ExceptionSelectorValue,
+                       PointerType::getUnqual(ConvertType(TREE_TYPE(exp))));
 }
 
 //===----------------------------------------------------------------------===//
