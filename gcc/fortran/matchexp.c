@@ -198,9 +198,7 @@ match_primary (gfc_expr ** result)
   return MATCH_YES;
 
 syntax:
-  /* LLVM LOCAL begin */
   gfc_error ("%s", expression_syntax);
-  /* LLVM LOCAL end */
   return MATCH_ERROR;
 }
 
@@ -495,9 +493,7 @@ match_level_2 (gfc_expr ** result)
       m = match_ext_add_operand (&e);
       if (m == MATCH_NO)
 	{
-         /* LLVM LOCAL begin */
 	  gfc_error ("%s", expression_syntax);
-         /* LLVM LOCAL end */
 	  m = MATCH_ERROR;
 	}
     }
@@ -536,9 +532,7 @@ match_level_2 (gfc_expr ** result)
 
       m = match_ext_add_operand (&e);
       if (m == MATCH_NO)
-       /* LLVM LOCAL begin */
 	gfc_error ("%s", expression_syntax);
-       /* LLVM LOCAL end */
       if (m != MATCH_YES)
 	{
 	  gfc_free_expr (all);
@@ -589,9 +583,7 @@ match_level_3 (gfc_expr ** result)
       m = match_level_2 (&e);
       if (m == MATCH_NO)
 	{
-         /* LLVM LOCAL begin */
 	  gfc_error ("%s", expression_syntax);
-         /* LLVM LOCAL end */
 	  gfc_free_expr (all);
 	}
       if (m != MATCH_YES)
@@ -649,9 +641,7 @@ match_level_4 (gfc_expr ** result)
 
   m = match_level_3 (&right);
   if (m == MATCH_NO)
-    /* LLVM LOCAL begin */
     gfc_error ("%s", expression_syntax);
-    /* LLVM LOCAL end */
   if (m != MATCH_YES)
     {
       gfc_free_expr (left);
@@ -754,9 +744,7 @@ match_or_operand (gfc_expr ** result)
 
       m = match_and_operand (&e);
       if (m == MATCH_NO)
-       /* LLVM LOCAL begin */
 	gfc_error ("%s", expression_syntax);
-       /* LLVM LOCAL end */
       if (m != MATCH_YES)
 	{
 	  gfc_free_expr (all);
@@ -799,9 +787,7 @@ match_equiv_operand (gfc_expr ** result)
 
       m = match_or_operand (&e);
       if (m == MATCH_NO)
-       /* LLVM LOCAL begin */
 	gfc_error ("%s", expression_syntax);
-       /* LLVM LOCAL end */
       if (m != MATCH_YES)
 	{
 	  gfc_free_expr (all);
@@ -855,9 +841,7 @@ match_level_5 (gfc_expr ** result)
 
       m = match_equiv_operand (&e);
       if (m == MATCH_NO)
-       /* LLVM LOCAL begin */
 	gfc_error ("%s", expression_syntax);
-       /* LLVM LOCAL end */
       if (m != MATCH_YES)
 	{
 	  gfc_free_expr (all);
@@ -916,9 +900,7 @@ gfc_match_expr (gfc_expr ** result)
 
       m = match_level_5 (&e);
       if (m == MATCH_NO)
-       /* LLVM LOCAL begin */
 	gfc_error ("%s", expression_syntax);
-       /* LLVM LOCAL end */
       if (m != MATCH_YES)
 	{
 	  gfc_free_expr (all);

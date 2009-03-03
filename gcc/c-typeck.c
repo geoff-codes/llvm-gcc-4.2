@@ -2081,13 +2081,6 @@ build_array_ref (tree array, tree index)
       if (TREE_CODE (type) != ARRAY_TYPE && !objc_is_object_ptr (type))
       /* APPLE LOCAL end radar 6164211 */
 	type = TYPE_MAIN_VARIANT (type);
-      /* LLVM LOCAL begin propagate objc_volatilized: rdar://6551276 */
-#ifdef ENABLE_LLVM
-      if (lookup_attribute ("objc_volatilized", 
-                            TYPE_ATTRIBUTES (TREE_TYPE (TREE_TYPE (array)))))
-        type = objc_build_volatilized_type(type);
-#endif
-      /* LLVM LOCAL end propagate objc_volatilized: rdar://6551276 */
       rval = build4 (ARRAY_REF, type, array, index, NULL_TREE, NULL_TREE);
       /* Array ref is const/volatile if the array elements are
 	 or if the array is.  */
@@ -2130,18 +2123,13 @@ build_array_ref (tree array, tree index)
           ty = TYPE_MAIN_VARIANT (ty);
 
         ar = build4 (ARRAY_REF, ty, ar, index, NULL_TREE, NULL_TREE);
-        /* Mirror logic from build_indirect_ref to set TREE_THIS_VOLATILE and other
-         * flags.
-         */
-        TREE_READONLY (ar) = TYPE_READONLY (TREE_TYPE (ar));
-        TREE_THIS_VOLATILE(ar) = TYPE_VOLATILE(TREE_TYPE (ar));
-        TREE_SIDE_EFFECTS (ar)
-          = TREE_THIS_VOLATILE (ar) || TREE_SIDE_EFFECTS (array) ||
-            TREE_SIDE_EFFECTS (index);
+        /* mirror logic from build_indirect_ref to set TREE_THIS_VOLATILE.  */
+        TREE_THIS_VOLATILE(ar) = TYPE_VOLATILE(TREE_TYPE(ar));
         return ar;
       }
 #endif
       /* LLVM LOCAL end */
+      
       return build_indirect_ref (build_binary_op (PLUS_EXPR, ar, index, 0),
 				 "array indexing");
     }

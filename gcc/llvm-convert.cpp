@@ -78,6 +78,186 @@ extern enum machine_mode reg_raw_mode[FIRST_PSEUDO_REGISTER];
    TREE_CODE(DECL_INITIAL(exp)) == CONSTRUCTOR &&                      \
    !TREE_TYPE(DECL_INITIAL(exp)))
 
+//===----------------------------------------------------------------------===//
+//                   Matching LLVM Values with GCC DECL trees
+//===----------------------------------------------------------------------===//
+//
+// LLVMValues is a vector of LLVM Values. GCC tree nodes keep track of LLVM 
+// Values using this vector's index. It is easier to save and restore the index 
+// than the LLVM Value pointer while using PCH. 
+
+// Collection of LLVM Values
+static std::vector<Value *> LLVMValues;
+typedef DenseMap<Value *, unsigned> LLVMValuesMapTy;
+static LLVMValuesMapTy LLVMValuesMap;
+
+/// LocalLLVMValueIDs - This is the set of local IDs we have in our mapping,
+/// this allows us to efficiently identify and remove them.  Local IDs are IDs
+/// for values that are local to the current function being processed.  These do
+/// not need to go into the PCH file, but DECL_LLVM still needs a valid index
+/// while converting the function.  Using "Local IDs" allows the IDs for
+/// function-local decls to be recycled after the function is done.
+static std::vector<unsigned> LocalLLVMValueIDs;
+
+// Remember the LLVM value for GCC tree node.
+void llvm_set_decl(tree Tr, Value *V) {
+
+  // If there is not any value then do not add new LLVMValues entry.
+  // However clear Tr index if it is non zero.
+  if (!V) {
+    if (GET_DECL_LLVM_INDEX(Tr))
+      SET_DECL_LLVM_INDEX(Tr, 0);
+    return;
+  }
+
+  unsigned &ValueSlot = LLVMValuesMap[V];
+  if (ValueSlot) {
+    // Already in map
+    SET_DECL_LLVM_INDEX(Tr, ValueSlot);
+    return;
+  }
+
+  LLVMValues.push_back(V);
+  unsigned Index = LLVMValues.size();
+  SET_DECL_LLVM_INDEX(Tr, Index);
+  LLVMValuesMap[V] = Index;
+  
+  // Remember local values.
+  if (!isa<Constant>(V))
+    LocalLLVMValueIDs.push_back(Index);
+}
+
+// Return TRUE if there is a LLVM Value associate with GCC tree node.
+bool llvm_set_decl_p(tree Tr) {
+  unsigned Index = GET_DECL_LLVM_INDEX(Tr);
+  if (Index == 0)
+    return false;
+
+  return LLVMValues[Index - 1] != 0;
+}
+
+// Get LLVM Value for the GCC tree node based on LLVMValues vector index.
+// If there is not any value associated then use make_decl_llvm() to 
+// make LLVM value. When GCC tree node is initialized, it has 0 as the 
+// index value. This is why all recorded indices are offset by 1.
+Value *llvm_get_decl(tree Tr) {
+
+  unsigned Index = GET_DECL_LLVM_INDEX(Tr);
+  if (Index == 0) {
+    make_decl_llvm(Tr);
+    Index = GET_DECL_LLVM_INDEX(Tr);
+    
+    // If there was an error, we may have disabled creating LLVM values.
+    if (Index == 0) return 0;
+  }
+  assert((Index - 1) < LLVMValues.size() && "Invalid LLVM value index");
+  assert(LLVMValues[Index - 1] && "Trying to use deleted LLVM value!");
+
+  return LLVMValues[Index - 1];
+}
+
+/// changeLLVMValue - If Old exists in the LLVMValues map, rewrite it to New.
+/// At this point we know that New is not in the map.
+void changeLLVMValue(Value *Old, Value *New) {
+  assert(isa<Constant>(Old) && isa<Constant>(New) &&
+         "Cannot change local values");
+  assert(!LLVMValuesMap.count(New) && "New cannot be in the map!");
+  
+  // Find Old in the table.
+  LLVMValuesMapTy::iterator I = LLVMValuesMap.find(Old);
+  if (I == LLVMValuesMap.end()) return;
+  
+  unsigned Idx = I->second-1;
+  assert(Idx < LLVMValues.size() && "Out of range index!");
+  assert(LLVMValues[Idx] == Old && "Inconsistent LLVMValues mapping!");
+  
+  LLVMValues[Idx] = New;
+  
+  // Remove the old value from the value map.
+  LLVMValuesMap.erase(I);
+  
+  // Insert the new value into the value map.  We know that it can't already
+  // exist in the mapping.
+  if (New)
+    LLVMValuesMap[New] = Idx+1;
+}
+
+// Read LLVM Types string table
+void readLLVMValues() {
+  GlobalValue *V = TheModule->getNamedGlobal("llvm.pch.values");
+  if (!V)
+    return;
+
+  GlobalVariable *GV = cast<GlobalVariable>(V);
+  ConstantStruct *ValuesFromPCH = cast<ConstantStruct>(GV->getOperand(0));
+
+  for (unsigned i = 0; i < ValuesFromPCH->getNumOperands(); ++i) {
+    Value *Va = ValuesFromPCH->getOperand(i);
+
+    if (!Va) {
+      // If V is empty then insert NULL to represent empty entries.
+      LLVMValues.push_back(Va);
+      continue;
+    }
+    if (ConstantArray *CA = dyn_cast<ConstantArray>(Va)) {
+      std::string Str = CA->getAsString();
+      Va = TheModule->getValueSymbolTable().lookup(Str);
+    } 
+    assert (Va != NULL && "Invalid Value in LLVMValues string table");
+    LLVMValues.push_back(Va);
+  }
+
+  // Now, llvm.pch.values is not required so remove it from the symbol table.
+  GV->eraseFromParent();
+}
+
+// GCC tree's uses LLVMValues vector's index to reach LLVM Values.
+// Create a string table to hold these LLVM Values' names. This string
+// table will be used to recreate LTypes vector after loading PCH.
+void writeLLVMValues() {
+  if (LLVMValues.empty()) 
+    return;
+
+  std::vector<Constant *> ValuesForPCH;
+  for (std::vector<Value *>::iterator I = LLVMValues.begin(),
+         E = LLVMValues.end(); I != E; ++I)  {
+    if (Constant *C = dyn_cast_or_null<Constant>(*I))
+      ValuesForPCH.push_back(C);
+    else
+      // Non constant values, e.g. arguments, are not at global scope.
+      // When PCH is read, only global scope values are used.
+      ValuesForPCH.push_back(Constant::getNullValue(Type::Int32Ty));
+  }
+
+  // Create string table.
+  Constant *LLVMValuesTable = ConstantStruct::get(ValuesForPCH, false);
+
+  // Create variable to hold this string table.
+  new GlobalVariable(LLVMValuesTable->getType(), true,
+                     GlobalValue::ExternalLinkage, 
+                     LLVMValuesTable,
+                     "llvm.pch.values", TheModule);
+}
+
+/// eraseLocalLLVMValues - drop all non-global values from the LLVM values map.
+void eraseLocalLLVMValues() {
+  // Erase all the local values, these are stored in LocalLLVMValueIDs.
+  while (!LocalLLVMValueIDs.empty()) {
+    unsigned Idx = LocalLLVMValueIDs.back()-1;
+    LocalLLVMValueIDs.pop_back();
+    
+    if (Value *V = LLVMValues[Idx]) {
+      assert(!isa<Constant>(V) && "Found global value");
+      LLVMValuesMap.erase(V);
+    }
+
+    if (Idx == LLVMValues.size()-1)
+      LLVMValues.pop_back();
+    else
+      LLVMValues[Idx] = 0;
+  }
+}
+
 /// isGimpleTemporary - Return true if this is a gimple temporary that we can
 /// directly compile into an LLVM temporary.  This saves us from creating an
 /// alloca and creating loads/stores of that alloca (a compile-time win).  We
@@ -102,7 +282,7 @@ static bool isStructWithVarSizeArrayAtEnd(const Type *Ty) {
 
 /// getINTEGER_CSTVal - Return the specified INTEGER_CST value as a uint64_t.
 ///
-uint64_t getINTEGER_CSTVal(tree exp) {
+static uint64_t getINTEGER_CSTVal(tree exp) {
   unsigned HOST_WIDE_INT HI = (unsigned HOST_WIDE_INT)TREE_INT_CST_HIGH(exp);
   unsigned HOST_WIDE_INT LO = (unsigned HOST_WIDE_INT)TREE_INT_CST_LOW(exp);
   if (HOST_BITS_PER_WIDE_INT == 64) {
@@ -448,7 +628,7 @@ void TreeToLLVM::StartFunctionBody() {
       FnEntry->replaceAllUsesWith(
         Builder.getFolder().CreateBitCast(Fn, FnEntry->getType())
       );
-      changeLLVMConstant(FnEntry, Fn);
+      changeLLVMValue(FnEntry, Fn);
       FnEntry->eraseFromParent();
     }
     SET_DECL_LLVM(FnDecl, Fn);
@@ -489,10 +669,17 @@ void TreeToLLVM::StartFunctionBody() {
   // Handle used Functions
   if (lookup_attribute ("used", DECL_ATTRIBUTES (FnDecl)))
     AttributeUsedGlobals.insert(Fn);
-
+  
   // Handle noinline Functions
   if (lookup_attribute ("noinline", DECL_ATTRIBUTES (FnDecl)))
     Fn->addFnAttr(Attribute::NoInline);
+  /* FIXME: Remove llvm.noinline related code. 
+  {
+    const Type *SBP= PointerType::getUnqual(Type::Int8Ty);
+    AttributeNoinlineFunctions.push_back(
+      Builder.getFolder().CreateBitCast(Fn, SBP)
+    );
+  }*/
 
   // Handle always_inline attribute
   if (lookup_attribute ("always_inline", DECL_ATTRIBUTES (FnDecl)))
@@ -863,7 +1050,6 @@ Value *TreeToLLVM::Emit(tree exp, const MemRef *DestLoc) {
     break;
   case RDIV_EXPR: Result = EmitBinOp(exp, DestLoc, Instruction::FDiv); break;
   case CEIL_DIV_EXPR: Result = EmitCEIL_DIV_EXPR(exp); break;
-  case FLOOR_DIV_EXPR: Result = EmitFLOOR_DIV_EXPR(exp); break;
   case ROUND_DIV_EXPR: Result = EmitROUND_DIV_EXPR(exp); break;
   case TRUNC_MOD_EXPR: 
     if (TYPE_UNSIGNED(TREE_TYPE(exp)))
@@ -914,7 +1100,31 @@ Value *TreeToLLVM::Emit(tree exp, const MemRef *DestLoc) {
     Result = TreeConstantToLLVM::ConvertVECTOR_CST(exp);
     break;
   }
-
+  
+  // If this is an operation on an integer value in a precision smaller than
+  // the LLVM value we are computing it in, reduce the excess precision here.
+  // This happens with odd-sized bitfields (e.g. i33) that are evaluated in the
+  // next size power-of-two register (e.g. i64).  This should be reevaluated
+  // when we have good support for unusual sized integers in the code generator.
+  if (Result && TREE_CODE(TREE_TYPE(exp)) == INTEGER_TYPE) {
+    unsigned LLVMWidth = Result->getType()->getPrimitiveSizeInBits();
+    unsigned TreeWidth = TYPE_PRECISION(TREE_TYPE(exp));
+    if (LLVMWidth > TreeWidth && lang_hooks.reduce_bit_field_operations) {
+      if (TYPE_UNSIGNED(TREE_TYPE(exp))) {
+        // Use an 'and' to clear excess top bits.
+        Constant *Mask =
+          ConstantInt::get(APInt::getLowBitsSet(LLVMWidth, TreeWidth));
+        Result = Builder.CreateAnd(Result, Mask, "mask");
+      } else {
+        // Shift Left then shift right.
+        Constant *ShAmt = ConstantInt::get(Result->getType(), 
+                                           LLVMWidth-TreeWidth);
+        Result = Builder.CreateShl(Result, ShAmt, "sextl");
+        Result = Builder.CreateAShr(Result, ShAmt, "sextr");
+      }
+    }
+  }
+  
   if (TheDebugInfo && EXPR_HAS_LOCATION(exp)) {
     // Restore location back down the tree.
     TheDebugInfo->setLocationFile(EXPR_FILENAME(exp));
@@ -3083,10 +3293,14 @@ Value *TreeToLLVM::EmitABS_EXPR(tree exp) {
   case Type::FP128TyID: Name = "fabsl"; break;
   }
 
-  Value *V = TheModule->getOrInsertFunction(Name, Op->getType(), Op->getType(),
-                                            NULL);
-  CallInst *Call = Builder.CreateCall(V, Op);
+  Function *F = cast<Function>(TheModule->getOrInsertFunction(Name,
+                                                              Op->getType(),
+                                                              Op->getType(),
+                                                              NULL));
+  CallInst *Call = Builder.CreateCall(F, Op);
+  F->setDoesNotThrow();
   Call->setDoesNotThrow();
+  F->setDoesNotAccessMemory();
   Call->setDoesNotAccessMemory();
   return Call;
 }
@@ -3482,55 +3696,6 @@ Value *TreeToLLVM::EmitCEIL_DIV_EXPR(tree exp) {
   Value *CDiv = Builder.CreateSub(LHS, Offset);
   CDiv = Builder.CreateUDiv(CDiv, RHS);
   return Builder.CreateAdd(CDiv, Offset, "cdiv");
-}
-
-Value *TreeToLLVM::EmitFLOOR_DIV_EXPR(tree exp) {
-  // Notation: FLOOR_DIV_EXPR <-> FDiv, TRUNC_DIV_EXPR <-> Div.
-  Value *LHS = Emit(TREE_OPERAND(exp, 0), 0);
-  Value *RHS = Emit(TREE_OPERAND(exp, 1), 0);
-
-  // FDiv calculates LHS/RHS by rounding down to the nearest integer.  In terms
-  // of Div this means if the values of LHS and RHS have the same sign or if LHS
-  // is zero, then FDiv necessarily equals Div; and
-  //   LHS FDiv RHS = (LHS + Sign(RHS)) Div RHS - 1
-  // otherwise.
-
-  if (TYPE_UNSIGNED(TREE_TYPE(exp)))
-    // In the case of unsigned arithmetic, LHS and RHS necessarily have the
-    // same sign, so FDiv is the same as Div.
-    return Builder.CreateUDiv(LHS, RHS, "fdiv");
-
-  const Type *Ty = ConvertType(TREE_TYPE(exp));
-  Constant *Zero = ConstantInt::get(Ty, 0);
-  Constant *One = ConstantInt::get(Ty, 1);
-  Constant *MinusOne = ConstantInt::getAllOnesValue(Ty);
-
-  // In the case of signed arithmetic, we calculate FDiv as follows:
-  //   LHS FDiv RHS = (LHS + Sign(RHS) * Offset) Div RHS - Offset,
-  // where Offset is 1 if LHS and RHS have opposite signs and LHS is
-  // not zero, and 0 otherwise.
-
-  // Determine the signs of LHS and RHS, and whether they have the same sign.
-  Value *LHSIsPositive = Builder.CreateICmpSGE(LHS, Zero);
-  Value *RHSIsPositive = Builder.CreateICmpSGE(RHS, Zero);
-  Value *SignsDiffer = Builder.CreateICmpNE(LHSIsPositive, RHSIsPositive);
-
-  // Offset equals 1 if LHS and RHS have opposite signs and LHS is not zero.
-  Value *LHSNotZero = Builder.CreateICmpNE(LHS, Zero);
-  Value *OffsetOne = Builder.CreateAnd(SignsDiffer, LHSNotZero);
-  // ... otherwise it is 0.
-  Value *Offset = Builder.CreateSelect(OffsetOne, One, Zero);
-
-  // Calculate Sign(RHS) ...
-  Value *SignRHS = Builder.CreateSelect(RHSIsPositive, One, MinusOne);
-  // ... and Sign(RHS) * Offset
-  Value *SignedOffset = CastToType(Instruction::SExt, OffsetOne, Ty);
-  SignedOffset = Builder.CreateAnd(SignRHS, SignedOffset);
-
-  // Return FDiv = (LHS + Sign(RHS) * Offset) Div RHS - Offset.
-  Value *FDiv = Builder.CreateAdd(LHS, SignedOffset);
-  FDiv = Builder.CreateSDiv(FDiv, RHS);
-  return Builder.CreateSub(FDiv, Offset, "fdiv");
 }
 
 Value *TreeToLLVM::EmitROUND_DIV_EXPR(tree exp) {
@@ -4383,8 +4548,11 @@ bool TreeToLLVM::EmitBuiltinCall(tree exp, tree fndecl,
       // If this builtin directly corresponds to an LLVM intrinsic, get the
       // IntrinsicID now.
       const char *BuiltinName = IDENTIFIER_POINTER(DECL_NAME(fndecl));
-      Intrinsic::ID IntrinsicID = 
-        Intrinsic::getIntrinsicForGCCBuiltin(TargetPrefix, BuiltinName);
+      Intrinsic::ID IntrinsicID = Intrinsic::not_intrinsic;
+#define GET_LLVM_INTRINSIC_FOR_GCC_BUILTIN
+#include "llvm/Intrinsics.gen"
+#undef GET_LLVM_INTRINSIC_FOR_GCC_BUILTIN
+      
       if (IntrinsicID == Intrinsic::not_intrinsic) {
         if (EmitFrontendExpandedBuiltinCall(exp, fndecl, DestLoc, Result))
           return true;
@@ -5834,15 +6002,24 @@ LValue TreeToLLVM::EmitLV_ARRAY_REF(tree exp) {
     // SExt it to retain its value in the larger type
     IndexVal = CastToSIntType(IndexVal, IntPtrTy);
 
+  // If this is an index into an LLVM array, codegen as a GEP.
+  if (isArrayCompatible(ArrayTreeType)) {
+    Value *Idxs[2] = { ConstantInt::get(Type::Int32Ty, 0), IndexVal };
+    Value *Ptr = Builder.CreateGEP(ArrayAddr, Idxs, Idxs + 2);
+    const Type *ATy = cast<PointerType>(ArrayAddr->getType())->getElementType();
+    const Type *ElementTy = cast<ArrayType>(ATy)->getElementType();
+    unsigned Alignment = MinAlign(ArrayAlign, TD.getTypePaddedSize(ElementTy));
+    return LValue(BitCastToType(Ptr,
+                           PointerType::getUnqual(ConvertType(TREE_TYPE(exp)))),
+                  Alignment);
+  }
+
   // If we are indexing over a fixed-size type, just use a GEP.
   if (isSequentialCompatible(ArrayTreeType)) {
-    SmallVector<Value*, 2> Idx;
-    if (TREE_CODE(ArrayTreeType) == ARRAY_TYPE)
-      Idx.push_back(ConstantInt::get(IntPtrTy, 0));
-    Idx.push_back(IndexVal);
-    Value *Ptr = Builder.CreateGEP(ArrayAddr, Idx.begin(), Idx.end());
-
     const Type *ElementTy = ConvertType(ElementType);
+    const Type *PtrElementTy = PointerType::getUnqual(ElementTy);
+    ArrayAddr = BitCastToType(ArrayAddr, PtrElementTy);
+    Value *Ptr = Builder.CreateGEP(ArrayAddr, IndexVal);
     unsigned Alignment = MinAlign(ArrayAlign, TD.getABITypeAlignment(ElementTy));
     return LValue(BitCastToType(Ptr,
                            PointerType::getUnqual(ConvertType(TREE_TYPE(exp)))),
@@ -7172,11 +7349,6 @@ Constant *TreeConstantToLLVM::EmitLV_STRING_CST(tree exp) {
                                             TAI->getStringConstantPrefix() : 
                                             ".str", TheModule);
   if (SlotP) *SlotP = GV;
-#ifdef LLVM_CSTRING_SECTION
-  // For Darwin, try to put it into the .cstring section.
-  if (TAI && TAI->SectionKindForGlobal(GV) == SectionKind::RODataMergeStr)
-    GV->setSection(LLVM_CSTRING_SECTION);
-#endif
   return GV;
 }
 
@@ -7193,7 +7365,8 @@ Constant *TreeConstantToLLVM::EmitLV_ARRAY_REF(tree exp) {
 
   // Check for variable sized reference.
   // FIXME: add support for array types where the size doesn't fit into 64 bits
-  assert(isSequentialCompatible(ArrayType) && "Global with variable size?");
+  assert((isArrayCompatible(ArrayType) || isSequentialCompatible(ArrayType))
+         && "Cannot have globals with variable size!");
 
   // As an LLVM extension, we allow ARRAY_REF with a pointer as the first
   // operand.  This construct maps directly to a getelementptr instruction.
@@ -7216,8 +7389,8 @@ Constant *TreeConstantToLLVM::EmitLV_ARRAY_REF(tree exp) {
                                         !TYPE_UNSIGNED(IndexType));
 
   std::vector<Value*> Idx;
-  if (TREE_CODE (ArrayType) == ARRAY_TYPE)
-    Idx.push_back(ConstantInt::get(IntPtrTy, 0));
+  if (isArrayCompatible(ArrayType))
+    Idx.push_back(ConstantInt::get(Type::Int32Ty, 0));
   Idx.push_back(IndexVal);
 
   return TheFolder->CreateGetElementPtr(ArrayAddr, &Idx[0], Idx.size());

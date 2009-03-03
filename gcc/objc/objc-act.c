@@ -3452,12 +3452,7 @@ objc_build_struct (tree class, tree fields, tree super_name)
 /* Build a type differing from TYPE only in that TYPE_VOLATILE is set.
    Unlike tree.c:build_qualified_type(), preserve TYPE_LANG_SPECIFIC in the
    process.  */
-/* LLVM LOCAL begin rdar 6551276 */
-#ifndef ENABLE_LLVM
-static
-#endif
-tree
-/* LLVM LOCAL end rdar 6551276 */
+static tree
 objc_build_volatilized_type (tree type)
 {
   tree t;
@@ -12492,7 +12487,7 @@ build_protocollist_translation_table (void)
       tree decl = TREE_PURPOSE (chain);
       gcc_assert (TREE_CODE (expr) == PROTOCOL_INTERFACE_TYPE);
       /* APPLE LOCAL begin radar 4695109 */
-      /* LLVM LOCAL begin - radar 5476262 */
+      /* APPLE LOCAL begin - LLVM radar 5476262 */
 #ifdef ENABLE_LLVM
       if (flag_objc_abi == 2)
         /* LLVM LOCAL - add 'l' prefix */
@@ -12525,17 +12520,15 @@ build_protocollist_translation_table (void)
         expr = start_var_decl (objc_v2_protocol_template, string);
       }
 #endif
-      /* LLVM LOCAL end - radar 5476262 */
+      /* APPLE LOCAL end - LLVM radar 5476262 */
       /* APPLE LOCAL end radar 4695109 */
       expr = convert (objc_protocol_type, build_fold_addr_expr (expr));
       finish_var_decl (decl, expr);
-      /* LLVM LOCAL begin */
 #ifdef ENABLE_LLVM
       /* At -O0, we may have emitted references to the decl earlier. */
       if (!optimize)
         reset_initializer_llvm(decl);
 #endif
-      /* LLVM LOCAL end */
     }
 }
 
@@ -14158,11 +14151,11 @@ build_v2_protocol_reference (tree p)
   set_user_assembler_name (decl, proto_name);
   /* APPLE LOCAL end radar 6255913 */
   PROTOCOL_V2_FORWARD_DECL (p) = decl;
-  /* LLVM LOCAL begin - radar 5476262 */
+  /* APPLE LOCAL begin - LLVM radar 5476262 */
 #ifdef ENABLE_LLVM
   pushdecl_top_level(decl);
 #endif
-  /* LLVM LOCAL end - radar 5476262 */
+  /* APPLE LOCAL end - LLVM radar 5476262 */
 }
 /* APPLE LOCAL end radar 4695109 */
 
@@ -19379,7 +19372,7 @@ generate_objc_image_info (void)
   /* APPLE LOCAL end radar 4810609 */
 
   /* APPLE LOCAL begin radar 4810587 */
-  /* LLVM LOCAL begin */
+  /* APPLE LOCAL begin LLVM */
 #ifdef ENABLE_LLVM
   /* Darwin linker prefers to use 'L' as a prefix. GCC codegen handles this
      later while emitting symbols, but fix it here for llvm.  */
@@ -19388,7 +19381,7 @@ generate_objc_image_info (void)
                      (integer_type_node,
                       build_index_type (build_int_cst (NULL_TREE, 2 - 1))));
 #else
-  /* LLVM LOCAL end */
+  /* APPLE LOCAL end LLVM */
   decl = build_decl (VAR_DECL, get_identifier ("_OBJC_IMAGE_INFO"), 
 		     build_array_type
 		       (integer_type_node,
@@ -19409,13 +19402,13 @@ generate_objc_image_info (void)
   DECL_CONTEXT (decl) = 0;
   DECL_ARTIFICIAL (decl) = 1;
   DECL_INITIAL (decl) = initlist;
-  /* LLVM LOCAL begin */
+  /* APPLE LOCAL begin LLVM */
 #ifdef ENABLE_LLVM
   /* Let optimizer know that this decl is not removable.  */
   set_user_assembler_name(decl, IDENTIFIER_POINTER (DECL_NAME(decl)));
   DECL_PRESERVE_P (decl) = 1;
 #endif
-  /* LLVM LOCAL end */
+  /* APPLE LOCAL end LLVM */
   assemble_variable (decl, 1, 0, 0);
 }
   /* APPLE LOCAL end radar 4810587 */

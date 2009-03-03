@@ -254,9 +254,7 @@ match_hollerith_constant (gfc_expr ** result)
       msg = gfc_extract_int (e, &num);
       if (msg != NULL)
 	{
-         /* LLVM LOCAL begin */
 	  gfc_error ("%s", msg);
-         /* LLVM LOCAL end */
 	  goto cleanup;
 	}
       if (num == 0)
@@ -927,9 +925,7 @@ match_string_constant (gfc_expr ** result)
       q = gfc_extract_int (sym->value, &kind);
       if (q != NULL)
 	{
-         /* LLVM LOCAL begin */
 	  gfc_error ("%s", q);
-         /* LLVM LOCAL end */
 	  return MATCH_ERROR;
 	}
     }
@@ -1436,9 +1432,7 @@ match_keyword_arg (gfc_actual_arglist * actual, gfc_actual_arglist * base)
 	  }
     }
 
-  /* LLVM LOCAL begin */
   actual->name = gfc_get_string ("%s", name);
-  /* LLVM LOCAL end */
   return MATCH_YES;
 
 cleanup:

@@ -299,7 +299,6 @@ int warn_unknown_pragmas; /* Tri state variable.  */
 
 /* APPLE LOCAL begin default to Wformat-security 5764921 */
 /* LLVM LOCAL begin initialize via config/darwin.h */
-#ifdef ENABLE_LLVM
 #ifndef WARN_FORMAT_INIT
 #define WARN_FORMAT_INIT 0
 #endif
@@ -308,9 +307,6 @@ int warn_unknown_pragmas; /* Tri state variable.  */
 #endif
 int warn_format = WARN_FORMAT_INIT;
 int warn_format_security = WARN_FORMAT_SECURITY_INIT;
-#else
-int warn_format = 1;
-#endif
 /* LLVM LOCAL end initialize via config/darwin.h */
 /* APPLE LOCAL end default to Wformat-security 5764921 */
 
@@ -5173,16 +5169,6 @@ handle_weak_attribute (tree *node, tree name,
       || TREE_CODE (*node) == VAR_DECL)
     declare_weak (*node);
   /* APPLE LOCAL begin weak types 5954418 */
-  else if (!DECL_P (*node)
-	   /* If the weak flag can be associated with something else,
-	      prefer that. */
-	   && (flags & (ATTR_FLAG_FUNCTION_NEXT
-			|ATTR_FLAG_DECL_NEXT
-			|ATTR_FLAG_ARRAY_NEXT)))
-    {
-      *no_add_attrs = true;
-      return tree_cons (name, args, NULL_TREE);
-    }
   else if (! targetm.cxx.class_data_always_comdat ()
 	   && TREE_CODE (*node) == RECORD_TYPE)
     {

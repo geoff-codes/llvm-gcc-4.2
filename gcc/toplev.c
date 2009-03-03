@@ -259,10 +259,8 @@ int flag_signed_char;
 int flag_short_enums;
 
 /* LLVM LOCAL begin */
-#ifdef ENABLE_LLVM
 /* Options to pass directly into the LLVM backend. */
 const char *llvm_optns = 0;
-#endif
 /* LLVM LOCAL end */
 
 /* APPLE LOCAL begin -fast or -fastf or -fastcp */
@@ -1234,12 +1232,10 @@ decode_d_option (const char *arg)
 	break;
 
       /* LLVM LOCAL begin */
-#ifdef ENABLE_LLVM
       case 'M':
          /* Ignore -dM. This is overloaded for rtl pass that 
             does not exist in llvm-gcc.  */
          break;
-#endif
       /* LLVM LOCAL end */
       case 'a':
       default:
@@ -1846,11 +1842,9 @@ process_options (void)
     flag_profile_values = 1;
 
   /* LLVM LOCAL begin */
-#ifdef ENABLE_LLVM
   /* Disable verbose_asm flag if -emit-llvm is used, it's totally bogus then */
   if (emit_llvm || emit_llvm_bc)
     flag_verbose_asm = 0;
-#endif
   /* LLVM LOCAL end */
 
   /* Warn about options that are not supported on this machine.  */

@@ -88,14 +88,14 @@ static uint64_t NodeSizeInBits(tree Node) {
     if (TYPE_SIZE(Node) == NULL_TREE)
       return 0;
     else if (isInt64(TYPE_SIZE(Node), 1))
-      return getINTEGER_CSTVal(TYPE_SIZE(Node));
+      return getInt64(TYPE_SIZE(Node), 1);
     else
       return TYPE_ALIGN(Node);
   } else if (DECL_P(Node)) {
     if (DECL_SIZE(Node) == NULL_TREE)
       return 0;
     else if (isInt64(DECL_SIZE(Node), 1))
-      return getINTEGER_CSTVal(DECL_SIZE(Node));
+      return getInt64(DECL_SIZE(Node), 1);
     else
       return DECL_ALIGN(Node);
   }
@@ -202,7 +202,18 @@ DebugInfo::DebugInfo(Module *m)
 , PrevLineNo(0)
 , PrevBB(NULL)
 , RegionStack()
-{}
+{
+
+  // Each input file is encoded as a separate compile unit in LLVM
+  // debugging information output. However, many target specific tool chains
+  // prefer to encode only one compile unit in an object file. In this 
+  // situation, the LLVM code generator will include  debugging information
+  // entities in the compile unit that is marked as main compile unit. The 
+  // code generator accepts maximum one main compile unit per module. If a
+  // module does not contain any main compile unit then the code generator 
+  // will emit multiple compile units in the output object file.
+  DICompileUnit M = getOrCreateCompileUnit(main_input_filename, true);
+}
 
 /// EmitFunctionStart - Constructs the debug code for entering a function -
 /// "llvm.dbg.func.start."
@@ -210,13 +221,12 @@ void DebugInfo::EmitFunctionStart(tree FnDecl, Function *Fn,
                                   BasicBlock *CurBB) {
   // Gather location information.
   expanded_location Loc = GetNodeLocation(FnDecl, false);
+  const char *FnName = GetNodeName(FnDecl);
   const char *LinkageName = getLinkageName(FnDecl);
 
   DISubprogram SP = 
     DebugFactory.CreateSubprogram(findRegion(FnDecl),
-                                  lang_hooks.dwarf_name(FnDecl, 0),
-                                  lang_hooks.dwarf_name(FnDecl, 0),
-                                  LinkageName,
+                                  FnName, FnName, LinkageName,
                                   getOrCreateCompileUnit(Loc.file), CurLineNo,
                                   getOrCreateType(TREE_TYPE(FnDecl)),
                                   Fn->hasInternalLinkage(),
@@ -288,11 +298,6 @@ void DebugInfo::EmitRegionEnd(Function *Fn, BasicBlock *CurBB) {
 /// region - "llvm.dbg.declare."
 void DebugInfo::EmitDeclare(tree decl, unsigned Tag, const char *Name,
                             tree type, Value *AI, BasicBlock *CurBB) {
-
-  // Do not emit variable declaration info, for now.
-  if (optimize)
-    return;
-
   // Ignore compiler generated temporaries.
   if (DECL_IGNORED_P(decl))
     return;
@@ -314,11 +319,6 @@ void DebugInfo::EmitDeclare(tree decl, unsigned Tag, const char *Name,
 /// EmitStopPoint - Emit a call to llvm.dbg.stoppoint to indicate a change of 
 /// source line - "llvm.dbg.stoppoint."
 void DebugInfo::EmitStopPoint(Function *Fn, BasicBlock *CurBB) {
-
-  // Do not emit line number info, for now.
-  if (optimize)
-    return;
-
   // Don't bother if things are the same as last time.
   if (PrevLineNo == CurLineNo &&
       PrevBB == CurBB &&
@@ -342,15 +342,8 @@ void DebugInfo::EmitGlobalVariable(GlobalVariable *GV, tree decl) {
   // Gather location information.
   expanded_location Loc = expand_location(DECL_SOURCE_LOCATION(decl));
   DIType TyD = getOrCreateType(TREE_TYPE(decl));
-  std::string DispName = GV->getNameStr();
-  if (DECL_NAME(decl)) {
-    if (IDENTIFIER_POINTER(DECL_NAME(decl)))
-      DispName = IDENTIFIER_POINTER(DECL_NAME(decl));
-  }
-    
   DebugFactory.CreateGlobalVariable(getOrCreateCompileUnit(Loc.file), 
-                                    GV->getNameStr(), 
-                                    DispName,
+                                    GV->getNameStr(), GV->getNameStr(), 
                                     getLinkageName(decl), 
                                     getOrCreateCompileUnit(Loc.file), Loc.line,
                                     TyD, GV->hasInternalLinkage(),
@@ -484,8 +477,8 @@ DIType DebugInfo::createArrayType(tree type) {
       tree MaxValue = TYPE_MAX_VALUE(Domain);
       if (MinValue && MaxValue &&
           isInt64(MinValue, 0) && isInt64(MaxValue, 0)) {
-        uint64_t Low = getINTEGER_CSTVal(MinValue);
-        uint64_t Hi = getINTEGER_CSTVal(MaxValue);
+        uint64_t Low = getInt64(MinValue, 0);
+        uint64_t Hi = getInt64(MaxValue, 0);
         Subscripts.push_back(DebugFactory.GetOrCreateSubrange(Low, Hi));
       }
     }
@@ -512,7 +505,7 @@ DIType DebugInfo::createEnumType(tree type) {
   if (TYPE_SIZE(type)) {
     for (tree Link = TYPE_VALUES(type); Link; Link = TREE_CHAIN(Link)) {
       tree EnumValue = TREE_VALUE(Link);
-      int64_t Value = getINTEGER_CSTVal(EnumValue);
+      int64_t Value = getInt64(EnumValue, tree_int_cst_sgn(EnumValue) > 0);
       const char *EnumName = IDENTIFIER_POINTER(TREE_PURPOSE(Link));
       Elements.push_back(DebugFactory.CreateEnumerator(EnumName, Value));
     }
@@ -542,27 +535,6 @@ DIType DebugInfo::createStructType(tree type) {
   unsigned Tag = TREE_CODE(type) == RECORD_TYPE ? DW_TAG_structure_type :
     DW_TAG_union_type;
   
-  unsigned RunTimeLang = 0;
-  if (TYPE_LANG_SPECIFIC (type)
-      && lang_hooks.types.is_runtime_specific_type (type))
-    {
-      DICompileUnit CU = getOrCreateCompileUnit(main_input_filename);
-      unsigned CULang = CU.getLanguage();
-      switch (CULang) {
-      case DW_LANG_ObjC_plus_plus :
-        RunTimeLang = DW_LANG_ObjC_plus_plus;
-        break;
-      case DW_LANG_ObjC :
-        RunTimeLang = DW_LANG_ObjC;
-        break;
-      case DW_LANG_C_plus_plus :
-        RunTimeLang = DW_LANG_C_plus_plus;
-        break;
-      default:
-        break;
-      }
-    }
-    
   // Records and classes and unions can all be recursive.  To handle them,
   // we first generate a debug descriptor for the struct as a forward 
   // declaration. Then (if it is a definition) we go through and get debug 
@@ -578,8 +550,7 @@ DIType DebugInfo::createStructType(tree type) {
                                      getOrCreateCompileUnit(Loc.file), 
                                      Loc.line, 
                                      0, 0, 0, llvm::DIType::FlagFwdDecl,
-                                     llvm::DIType(), llvm::DIArray(),
-                                     RunTimeLang);
+                                     llvm::DIType(), llvm::DIArray());
   
   // forward declaration, 
   if (TYPE_SIZE(type) == 0) 
@@ -606,7 +577,7 @@ DIType DebugInfo::createStructType(tree type) {
                                        findRegion(type),"", 
                                        getOrCreateCompileUnit(Loc.file), 
                                        0,0,0, 
-                                       getINTEGER_CSTVal(BINFO_OFFSET(BInfo)),
+                                       getInt64(BINFO_OFFSET(BInfo), 0),
                                        0, BaseClass);
       EltTys.push_back(DTy);
     }
@@ -617,7 +588,7 @@ DIType DebugInfo::createStructType(tree type) {
        Member = TREE_CHAIN(Member)) {
     // Should we skip.
     if (DECL_P(Member) && DECL_IGNORED_P(Member)) continue;
-
+    
     if (TREE_CODE(Member) == FIELD_DECL) {
       
       if (DECL_FIELD_OFFSET(Member) == 0 ||
@@ -660,12 +631,11 @@ DIType DebugInfo::createStructType(tree type) {
        Member = TREE_CHAIN(Member)) {
     
     if (DECL_ABSTRACT_ORIGIN (Member)) continue;
-    if (DECL_ARTIFICIAL (Member)) continue;
-
+    
     // Get the location of the member.
     expanded_location MemLoc = GetNodeLocation(Member, false);
     
-    const char *MemberName = lang_hooks.dwarf_name(Member, 0);        
+    const char *MemberName = GetNodeName(Member);                
     const char *LinkageName = getLinkageName(Member);
     DIType SPTy = getOrCreateType(TREE_TYPE(Member));
     DISubprogram SP = 
@@ -685,8 +655,7 @@ DIType DebugInfo::createStructType(tree type) {
                                      getOrCreateCompileUnit(Loc.file),
                                      Loc.line, 
                                      NodeSizeInBits(type), NodeAlignInBits(type),
-                                     0, 0, llvm::DIType(), Elements,
-                                     RunTimeLang);
+                                     0, 0, llvm::DIType(), Elements);
   
   // Now that we have a real decl for the struct, replace anything using the
   // old decl with the new one.  This will recursively update the debug info.
@@ -835,10 +804,9 @@ DIType DebugInfo::getOrCreateType(tree type) {
 /// getOrCreateCompileUnit - Get the compile unit from the cache or 
 /// create a new one if necessary.
 DICompileUnit DebugInfo::getOrCreateCompileUnit(const char *FullPath,
-                                                bool isMain) {
-  if (!FullPath)
-    FullPath = main_input_filename;
-  GlobalVariable *&CU = CUCache[FullPath];
+                                                bool isMain){
+
+  GlobalVariable *&CU = CUCache[FullPath ? FullPath : main_input_filename];
   if (CU)
     return DICompileUnit(CU);
 
@@ -869,23 +837,9 @@ DICompileUnit DebugInfo::getOrCreateCompileUnit(const char *FullPath,
   else
     LangTag = DW_LANG_C89;
 
-   const char *Flags = "";
-   // Do this only when RC_DEBUG_OPTIONS environment variable is set to
-   // a nonempty string. This is intended only for internal Apple use.
-   char * debugopt = getenv("RC_DEBUG_OPTIONS");
-   if (debugopt && debugopt[0])
-     Flags = get_arguments();
-
-   // flag_objc_abi represents Objective-C runtime version number. It is zero
-   // for all other language.
-   unsigned ObjcRunTimeVer = 0;
-   if (flag_objc_abi != 0 && flag_objc_abi != -1)
-     ObjcRunTimeVer = flag_objc_abi;
-   DICompileUnit NewCU = DebugFactory.CreateCompileUnit(LangTag, FileName, 
-                                                        Directory, 
-                                                        version_string, isMain,
-                                                        optimize, Flags,
-                                                        ObjcRunTimeVer);
+  DICompileUnit NewCU = DebugFactory.CreateCompileUnit(LangTag, FileName, 
+                                                       Directory, 
+                                                       version_string, isMain);
   CU = NewCU.getGV();
   return NewCU;
 }

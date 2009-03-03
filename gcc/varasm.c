@@ -6070,13 +6070,13 @@ default_encode_section_info (tree decl, rtx rtl, int first ATTRIBUTE_UNUSED)
 const char *
 default_strip_name_encoding (const char *str)
 {
-  /* LLVM LOCAL begin */
+  /* APPLE LOCAL begin LLVM */
 #ifndef ENABLE_LLVM
   return str + (*str == '*');
 #else
   return str + (*str == '\1');
 #endif
-  /* LLVM LOCAL end */
+  /* APPLE LOCAL end LLVM */
 }
 
 #ifdef ASM_OUTPUT_DEF
