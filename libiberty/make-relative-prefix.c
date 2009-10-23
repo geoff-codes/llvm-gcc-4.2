@@ -216,11 +216,10 @@ free_split_directories (char **dirs)
    function will return /red/green/blue/../../omega/.
 
    If no relative prefix can be found, return NULL.  */
-/* LLVM LOCAL begin */
+
 static char *
 make_relative_prefix_1 (const char *progname, const char *bin_prefix,
 			const char *prefix, const int resolve_links)
-/* LLVM LOCAL end */
 {
   char **prog_dirs, **bin_dirs, **prefix_dirs;
   int prog_num, bin_num, prefix_num;
@@ -290,7 +289,6 @@ make_relative_prefix_1 (const char *progname, const char *bin_prefix,
 	}
     }
 
-  /* LLVM LOCAL begin */
   if ( resolve_links )
     {
       full_progname = lrealpath (progname);
@@ -299,7 +297,6 @@ make_relative_prefix_1 (const char *progname, const char *bin_prefix,
     }
   else
     full_progname = strdup(progname);
-  /* LLVM LOCAL end */
 
   prog_dirs = split_directories (full_progname, &prog_num);
   bin_dirs = split_directories (bin_prefix, &bin_num);
@@ -396,7 +393,7 @@ make_relative_prefix_1 (const char *progname, const char *bin_prefix,
   return ret;
 }
 
-/* LLVM LOCAL begin */
+
 /* Do the full job, including symlink resolution.
    This path will find files installed in the same place as the
    program even when a soft link has been made to the program
@@ -424,4 +421,4 @@ make_relative_prefix_ignore_links (progname, bin_prefix, prefix)
 {
   return make_relative_prefix_1 (progname, bin_prefix, prefix, 0);
 }
-/* LLVM LOCAL end */
+

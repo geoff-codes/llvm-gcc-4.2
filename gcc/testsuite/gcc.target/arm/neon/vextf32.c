@@ -14,8 +14,7 @@ void test_vextf32 (void)
   float32x2_t arg0_float32x2_t;
   float32x2_t arg1_float32x2_t;
 
- /* LLVM LOCAL */
-  out_float32x2_t = vext_f32 (arg0_float32x2_t, arg1_float32x2_t, 1);
+  out_float32x2_t = vext_f32 (arg0_float32x2_t, arg1_float32x2_t, 0);
 }
 
 /* { dg-final { scan-assembler "vext\.32\[ 	\]+\[dD\]\[0-9\]+, \[dD\]\[0-9\]+, \[dD\]\[0-9\]+, #\[0-9\]+!?\(\[ 	\]+@\[a-zA-Z0-9 \]+\)?\n" } } */

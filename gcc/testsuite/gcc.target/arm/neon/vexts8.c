@@ -14,8 +14,7 @@ void test_vexts8 (void)
   int8x8_t arg0_int8x8_t;
   int8x8_t arg1_int8x8_t;
 
- /* LLVM LOCAL */
-  out_int8x8_t = vext_s8 (arg0_int8x8_t, arg1_int8x8_t, 1);
+  out_int8x8_t = vext_s8 (arg0_int8x8_t, arg1_int8x8_t, 0);
 }
 
 /* { dg-final { scan-assembler "vext\.8\[ 	\]+\[dD\]\[0-9\]+, \[dD\]\[0-9\]+, \[dD\]\[0-9\]+, #\[0-9\]+!?\(\[ 	\]+@\[a-zA-Z0-9 \]+\)?\n" } } */

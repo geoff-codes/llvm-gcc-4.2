@@ -449,10 +449,6 @@ struct tree_common GTY(())
 	   OMP_SECTION
        OMP_PARALLEL_COMBINED in
 	   OMP_PARALLEL
-   LLVM LOCAL begin msasm bit on asm
-       ASM_ASM_BLOCK in
-           ASM_EXPR
-   LLVM LOCAL end
 
    protected_flag:
 
@@ -1552,8 +1548,6 @@ struct tree_constructor GTY(())
    ASM_OPERAND with no operands.  */
 #define ASM_INPUT_P(NODE) (TREE_STATIC (NODE))
 #define ASM_VOLATILE_P(NODE) (TREE_PUBLIC (NODE))
-/* LLVM LOCAL msasm bit in asm */
-#define ASM_ASM_BLOCK(NODE) (TREE_PRIVATE (NODE))
 
 /* COND_EXPR accessors.  */
 #define COND_EXPR_COND(NODE)	(TREE_OPERAND (COND_EXPR_CHECK (NODE), 0))
@@ -2757,6 +2751,10 @@ struct tree_decl_with_rtl GTY(())
 /* In a FIELD_DECL, marks that the type is temporarily replaced in ConvertType
    because it is used as a base class of another type. */
 #define DECL_FIELD_BASE_REPLACED(NODE) (FIELD_DECL_CHECK (NODE)->decl_common.decl_flag_0)
+/* In a FIELD_DECL, marks that the type is temporarily replaced in ConvertType
+   because it is used as the type of a field with less alignment than the
+   type, which means the type may not get tail padding in this case. */
+#define DECL_FIELD_ALIGN_REPLACED(NODE) (FIELD_DECL_CHECK (NODE)->decl_common.gimple_reg_flag)
 #endif
 /* LLVM LOCAL end */
 
@@ -4894,8 +4892,10 @@ extern GTY(()) tree generic_block_literal_struct_type;
 
 /* APPLE LOCAL end radar 6300081  */
 
-/* LLVM LOCAL begin radar 6419781 */
-extern bool type_is_block_byref_struct (tree);
-/* LLVM LOCAL end radar 6419781 */
-
+/* LLVM LOCAL begin */
+/* The value of MAX_INLINE_INSNS_AUTO after all target-dependent changes
+   are applied to the global default (which many targets do), but before
+   command line flags are handled. */
+extern unsigned default_max_inline_insns_auto;
+/* LLVM LOCAL end */
 #endif  /* GCC_TREE_H  */

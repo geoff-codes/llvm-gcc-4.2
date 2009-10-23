@@ -112,7 +112,7 @@ struct DefaultABIClient {
 
 /// isAggregateTreeType - Return true if the specified GCC type is an aggregate
 /// that cannot live in an LLVM register.
-static inline bool isAggregateTreeType(tree type) {
+static bool isAggregateTreeType(tree type) {
   return TREE_CODE(type) == RECORD_TYPE || TREE_CODE(type) == ARRAY_TYPE ||
          TREE_CODE(type) == UNION_TYPE  || TREE_CODE(type) == QUAL_UNION_TYPE ||
          TREE_CODE(type) == COMPLEX_TYPE;
@@ -128,7 +128,7 @@ static inline bool isAggregateTreeType(tree type) {
 
 // doNotUseShadowReturn - Return true if the specified GCC type 
 // should not be returned using a pointer to struct parameter. 
-static inline bool doNotUseShadowReturn(tree type, tree fndecl) {
+static bool doNotUseShadowReturn(tree type, tree fndecl) {
   if (!TYPE_SIZE(type))
     return false;
   if (TREE_CODE(TYPE_SIZE(type)) != INTEGER_CST)
@@ -148,9 +148,8 @@ static inline bool doNotUseShadowReturn(tree type, tree fndecl) {
 /// fields in addition to the single element that has data.  If 
 /// rejectFatBitField, and the single element is a bitfield of a type that's
 /// bigger than the struct, return null anyway.
-static inline
-tree isSingleElementStructOrArray(tree type, bool ignoreZeroLength,
-                                  bool rejectFatBitfield) {
+static tree isSingleElementStructOrArray(tree type, bool ignoreZeroLength,
+                                         bool rejectFatBitfield) {
   // Scalars are good.
   if (!isAggregateTreeType(type)) return type;
   
@@ -198,7 +197,7 @@ tree isSingleElementStructOrArray(tree type, bool ignoreZeroLength,
 
 /// isZeroSizedStructOrUnion - Returns true if this is a struct or union 
 /// which is zero bits wide.
-static inline bool isZeroSizedStructOrUnion(tree type) {
+static bool isZeroSizedStructOrUnion(tree type) {
   if (TREE_CODE(type) != RECORD_TYPE &&
       TREE_CODE(type) != UNION_TYPE &&
       TREE_CODE(type) != QUAL_UNION_TYPE)
@@ -209,8 +208,7 @@ static inline bool isZeroSizedStructOrUnion(tree type) {
 // getLLVMScalarTypeForStructReturn - Return LLVM Type if TY can be 
 // returned as a scalar, otherwise return NULL. This is the default
 // target independent implementation.
-static inline
-const Type* getLLVMScalarTypeForStructReturn(tree type, unsigned *Offset) {
+static const Type* getLLVMScalarTypeForStructReturn(tree type, unsigned *Offset) {
   const Type *Ty = ConvertType(type);
   unsigned Size = getTargetData().getTypeAllocSize(Ty);
   *Offset = 0;
@@ -235,7 +233,7 @@ const Type* getLLVMScalarTypeForStructReturn(tree type, unsigned *Offset) {
 // getLLVMAggregateTypeForStructReturn - Return LLVM type if TY can be
 // returns as multiple values, otherwise return NULL. This is the default
 // target independent implementation.
-static inline const Type* getLLVMAggregateTypeForStructReturn(tree type) {
+static const Type* getLLVMAggregateTypeForStructReturn(tree type) {
   return NULL;
 }
 
@@ -355,10 +353,9 @@ static inline const Type* getLLVMAggregateTypeForStructReturn(tree type) {
 #define LLVM_EXTRACT_MULTIPLE_RETURN_VALUE(Src,Dest,V,B)     \
   llvm_default_extract_multiple_return_value((Src),(Dest),(V),(B))
 #endif
-static inline
-void llvm_default_extract_multiple_return_value(Value *Src, Value *Dest,
-                                                bool isVolatile,
-                                                LLVMBuilder &Builder) {
+static void llvm_default_extract_multiple_return_value(Value *Src, Value *Dest,
+                                                       bool isVolatile,
+                                                       LLVMBuilder &Builder) {
   assert (0 && "LLVM_EXTRACT_MULTIPLE_RETURN_VALUE is not implemented!");
 }
 
@@ -390,10 +387,10 @@ public:
       if (ScalarType)
         C.HandleAggregateResultAsScalar(ConvertType(ScalarType));
       else if (LLVM_SHOULD_RETURN_VECTOR_AS_SHADOW(type, isBuiltin))
-        C.HandleScalarShadowResult(Ty->getPointerTo(), false);
+        C.HandleScalarShadowResult(PointerType::getUnqual(Ty), false);
       else
         C.HandleScalarResult(Ty);
-    } else if (Ty->isSingleValueType() || Ty->isVoidTy()) {
+    } else if (Ty->isSingleValueType() || Ty == Type::getVoidTy(getGlobalContext())) {
       // Return scalar values normally.
       C.HandleScalarResult(Ty);
     } else if (doNotUseShadowReturn(type, fn)) {
@@ -422,7 +419,7 @@ public:
 
       // FIXME: should return the hidden first argument for some targets
       // (e.g. ELF i386).
-      C.HandleAggregateShadowResult(Ty->getPointerTo(), false);
+      C.HandleAggregateShadowResult(PointerType::getUnqual(Ty), false);
     }
   }
   
@@ -439,13 +436,13 @@ public:
     // Figure out if this field is zero bits wide, e.g. {} or [0 x int].  Do
     // not include variable sized fields here.
     std::vector<const Type*> Elts;
-    if (Ty->isVoidTy()) {
+    if (Ty == Type::getVoidTy(getGlobalContext())) {
       // Handle void explicitly as an opaque type.
       const Type *OpTy = OpaqueType::get(getGlobalContext());
       C.HandleScalarArgument(OpTy, type);
       ScalarElts.push_back(OpTy);
     } else if (isPassedByInvisibleReference(type)) { // variable size -> by-ref.
-      const Type *PtrTy = Ty->getPointerTo();
+      const Type *PtrTy = PointerType::getUnqual(Ty);
       C.HandleByInvisibleReferenceArgument(PtrTy, type);
       ScalarElts.push_back(PtrTy);
     } else if (isa<VectorType>(Ty)) {
@@ -667,7 +664,7 @@ public:
     const Type* wordType = getTargetData().getPointerSize() == 4 ?
         Type::getInt32Ty(getGlobalContext()) : Type::getInt64Ty(getGlobalContext());
     for (unsigned i=0, e=Elts.size(); i!=e; ++i)
-      if (OrigElts[i]->isVoidTy())
+      if (OrigElts[i]==Type::getVoidTy(getGlobalContext()))
         Elts[i] = wordType;
 
     const StructType *STy = StructType::get(getGlobalContext(), Elts, false);
@@ -746,10 +743,10 @@ public:
       if (ScalarType)
         C.HandleAggregateResultAsScalar(ConvertType(ScalarType));
       else if (LLVM_SHOULD_RETURN_VECTOR_AS_SHADOW(type, isBuiltin))
-        C.HandleScalarShadowResult(Ty->getPointerTo(), false);
+        C.HandleScalarShadowResult(PointerType::getUnqual(Ty), false);
       else
         C.HandleScalarResult(Ty);
-    } else if (Ty->isSingleValueType() || Ty->isVoidTy()) {
+    } else if (Ty->isSingleValueType() || Ty == Type::getVoidTy(getGlobalContext())) {
       // Return scalar values normally.
       C.HandleScalarResult(Ty);
     } else if (doNotUseShadowReturn(type, fn)) {
@@ -778,7 +775,7 @@ public:
 
       // FIXME: should return the hidden first argument for some targets
       // (e.g. ELF i386).
-      C.HandleAggregateShadowResult(Ty->getPointerTo(), false);
+      C.HandleAggregateShadowResult(PointerType::getUnqual(Ty), false);
     }
   }
   
@@ -812,7 +809,7 @@ public:
     // not include variable sized fields here.
     std::vector<const Type*> Elts;
     if (isPassedByInvisibleReference(type)) { // variable size -> by-ref.
-      const Type *PtrTy = Ty->getPointerTo();
+      const Type *PtrTy = PointerType::getUnqual(Ty);
       C.HandleByInvisibleReferenceArgument(PtrTy, type);
       ScalarElts.push_back(PtrTy);
 
@@ -1112,7 +1109,7 @@ public:
     const Type* wordType = getTargetData().getPointerSize() == 4
       ? Type::getInt32Ty(getGlobalContext()) : Type::getInt64Ty(getGlobalContext());
     for (unsigned i=0, e=Elts.size(); i!=e; ++i)
-      if (OrigElts[i]->isVoidTy())
+      if (OrigElts[i]==Type::getVoidTy(getGlobalContext()))
         Elts[i] = wordType;
 
     const StructType *STy = StructType::get(getGlobalContext(), Elts, false);
@@ -1147,5 +1144,5 @@ public:
   }
 };
 
-#endif /* LLVM_ABI_H */
+#endif
 /* LLVM LOCAL end (ENTIRE FILE!)  */

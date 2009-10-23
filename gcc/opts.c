@@ -609,13 +609,7 @@ decode_options (unsigned int argc, const char **argv)
     {
       if (!strcmp (argv[i], "-O"))
 	{
-          /* LLVM LOCAL begin */
-#ifndef ENABLE_LLVM
 	  optimize = 1;
-#else
-	  optimize = 2;
-#endif
-          /* LLVM LOCAL end */
 	  optimize_size = 0;
 	}
       else if (argv[i][0] == '-' && argv[i][1] == 'O')
@@ -687,6 +681,12 @@ decode_options (unsigned int argc, const char **argv)
   /* Allow default optimizations to be specified on a per-machine basis.  */
   OPTIMIZATION_OPTIONS (optimize, optimize_size);
 #endif
+
+  /* LLVM LOCAL begin hook up -finline-limit */
+  /* Remember the value of MAX_INLINE_INSNS_AUTO after applying target-dependent
+     changes to the defaults, but before command line options are parsed. */
+  default_max_inline_insns_auto = MAX_INLINE_INSNS_AUTO;
+  /* LLVM LOCAL end */
 
   /* APPLE LOCAL begin AV 3846092 */
   /* We have apple local patch to disable -fstrict-aliasing when -O2 is used.

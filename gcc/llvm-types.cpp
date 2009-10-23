@@ -590,6 +590,7 @@ static bool GCCTypeOverlapsWithPadding(tree type, int PadStartBits,
   case ARRAY_TYPE: {
     unsigned EltSizeBits = TREE_INT_CST_LOW(TYPE_SIZE(TREE_TYPE(type)));
     unsigned NumElts = cast<ArrayType>(ConvertType(type))->getNumElements();
+    unsigned OverlapElt = (unsigned)PadStartBits/EltSizeBits;
 
     // Check each element for overlap.  This is inelegant, but effective.
     for (unsigned i = 0; i != NumElts; ++i)
@@ -703,9 +704,9 @@ const Type *TypeConverter::ConvertType(tree orig_type) {
     debug_tree(type);
     abort();
   case VOID_TYPE:   return SET_TYPE_LLVM(type, Type::getVoidTy(Context));
-  case RECORD_TYPE:
+  case RECORD_TYPE: return ConvertRECORD(type, orig_type);
   case QUAL_UNION_TYPE:
-  case UNION_TYPE:  return ConvertRECORD(type, orig_type);
+  case UNION_TYPE:  return ConvertUNION(type, orig_type);
   case BOOLEAN_TYPE: {
     if (const Type *Ty = GET_TYPE_LLVM(type))
       return Ty;
@@ -745,8 +746,8 @@ const Type *TypeConverter::ConvertType(tree orig_type) {
     case 128:
 #ifdef TARGET_POWERPC
       return SET_TYPE_LLVM(type, Type::getPPC_FP128Ty(Context));
-#elif defined(TARGET_ZARCH) || defined(TARGET_CPU_sparc)  // FIXME: Use some generic define.
-      // This is for IEEE double extended, e.g. Sparc
+#elif 0
+             // This is for IEEE double extended, e.g. Sparc
       return SET_TYPE_LLVM(type, Type::getFP128Ty(Context));
 #else
       // 128-bit long doubles map onto { double, double }.
@@ -804,7 +805,7 @@ const Type *TypeConverter::ConvertType(tree orig_type) {
       // Restore ConvertingStruct for the caller.
       ConvertingStruct = false;
       
-      if (Actual->isVoidTy())
+      if (Actual == Type::getVoidTy(Context)) 
         Actual = Type::getInt8Ty(Context);  // void* -> sbyte*
       
       // Update the type, potentially updating TYPE_LLVM(type).
@@ -822,7 +823,8 @@ const Type *TypeConverter::ConvertType(tree orig_type) {
         Ty = GET_TYPE_LLVM(TYPE_MAIN_VARIANT(TREE_TYPE(type)));
         if (Ty == 0) {
           PointersToReresolve.push_back(type);
-          return TypeDB.setType(type, OpaqueType::get(Context)->getPointerTo());
+          return TypeDB.setType(type, 
+                         PointerType::getUnqual(OpaqueType::get(Context)));
         }
 
         // A type has already been computed.  However, this may be some sort of 
@@ -838,9 +840,9 @@ const Type *TypeConverter::ConvertType(tree orig_type) {
         Ty = ConvertType(TREE_TYPE(type));
       }
     
-      if (Ty->isVoidTy())
+      if (Ty == Type::getVoidTy(Context)) 
         Ty = Type::getInt8Ty(Context);  // void* -> sbyte*
-      return TypeDB.setType(type, Ty->getPointerTo());
+      return TypeDB.setType(type, PointerType::getUnqual(Ty));
     }
    
   case METHOD_TYPE:
@@ -1013,7 +1015,7 @@ namespace {
     /// argument is passed by value. It is lowered to a parameter passed by
     /// reference with an additional parameter attribute "ByVal".
     void HandleByValArgument(const llvm::Type *LLVMTy, tree type) {
-      HandleScalarArgument(LLVMTy->getPointerTo(), type);
+      HandleScalarArgument(PointerType::getUnqual(LLVMTy), type);
     }
 
     /// HandleFCAArgument - This callback is invoked if the aggregate function
@@ -1596,7 +1598,7 @@ struct StructTypeConversionInfo {
   void dump() const;
 };
 
-// Add new element which is a bit field. Size is not the size of bit field,
+// Add new element which is a bit field. Size is not the size of bit filed,
 // but size of bits required to determine type of new Field which will be
 // used to access this bit field.
 void StructTypeConversionInfo::addNewBitField(uint64_t Size,
@@ -1684,7 +1686,10 @@ void adjustPaddingElement(tree oldtree, tree newtree) {
 }
 
 /// Mapping from type to type-used-as-base-class and back.
-static DenseMap<std::pair<tree, unsigned int>, tree > BaseTypesMap;
+static DenseMap<tree, tree> BaseTypesMap;
+
+/// Mapping from type to less-aligned-type-used-within-struct and back.
+static DenseMap<std::pair<tree, unsigned int>, tree> LessAlignedTypesMap;
 
 /// FixBaseClassField - This method is called when we have a field Field
 /// of Record type within a Record, and the size of Field is smaller than the
@@ -1698,9 +1703,7 @@ static DenseMap<std::pair<tree, unsigned int>, tree > BaseTypesMap;
 
 static tree FixBaseClassField(tree Field) {
   tree oldTy = TREE_TYPE(Field);
-  std::pair<tree, unsigned int> p = std::make_pair(oldTy,
-                     std::min(DECL_ALIGN(Field), TYPE_ALIGN(oldTy)));
-  tree newTy = BaseTypesMap[p];
+  tree newTy = BaseTypesMap[oldTy];
   // If already in table, reuse.
   if (!newTy) {
     newTy = copy_node(oldTy);
@@ -1725,11 +1728,11 @@ static tree FixBaseClassField(tree Field) {
     // to the C++ virtual base case to get this far, but these don't have
     // the TYPE_DECL sentinel, nor the virtual base class allocation problem.
     if (!F || TREE_CODE(F) != TYPE_DECL) {
-      BaseTypesMap[p] = oldTy;
+      BaseTypesMap[oldTy] = oldTy;
       return oldTy;
     }
-    BaseTypesMap[p] = newTy;
-    BaseTypesMap[std::make_pair(newTy, 0U)] = oldTy;
+    BaseTypesMap[oldTy] = newTy;
+    BaseTypesMap[newTy] = oldTy;
     // Prevent gcc's garbage collector from destroying newTy.  The
     // GC code doesn't understand DenseMaps:(
     llvm_note_type_used(newTy);
@@ -1748,8 +1751,57 @@ static tree FixBaseClassField(tree Field) {
         p = IDENTIFIER_POINTER(TYPE_NAME(oldTy));
       else if (DECL_NAME(TYPE_NAME(oldTy)))
         p = IDENTIFIER_POINTER(DECL_NAME(TYPE_NAME(oldTy)));
-      char *q = (char *)xmalloc(strlen(p)+20);
-      sprintf(q, "%s.base.%d", p, TYPE_ALIGN(newTy));
+      char *q = (char *)xmalloc(strlen(p)+6);
+      strcpy(q,p);
+      strcat(q,".base");
+      TYPE_NAME(newTy) = get_identifier(q);
+      free(q);
+    }
+  }
+  return newTy;
+}
+
+/// FixLessAlignedClassField - This method is called when we have a field Field
+/// of Record type within a Record, and the alignment of Field is smaller than
+/// alignment of its Record type.  The field may not get as much tail padding
+/// as the type would in other contexts.  Replace Field's original
+/// type with a modified one that has the Field's alignment.
+
+static tree FixLessAlignedClassField(tree Field) {
+  tree oldTy = TREE_TYPE(Field);
+  std::pair<tree, unsigned int> p = std::make_pair(oldTy, DECL_ALIGN(Field));
+  tree newTy = LessAlignedTypesMap[p];
+  // If already in table, reuse.
+  if (!newTy) {
+    newTy = copy_node(oldTy);
+    tree F2 = 0, prevF2 = 0, F;
+    // Copy all the fields.
+    for (F = TYPE_FIELDS(oldTy); F; prevF2 = F2, F = TREE_CHAIN(F)) {
+      F2 = copy_node(F);
+      if (prevF2)
+        TREE_CHAIN(prevF2) = F2;
+      else
+        TYPE_FIELDS(newTy) = F2;
+      TREE_CHAIN(F2) = 0;
+    }
+    LessAlignedTypesMap[p] = newTy;
+    LessAlignedTypesMap[std::make_pair(newTy, 0U)] = oldTy;
+    /* Prevent gcc's garbage collector from destroying newTy.  The
+       GC code doesn't understand DenseMaps:( */
+    llvm_note_type_used(newTy);
+    TYPE_ALIGN(newTy) = DECL_ALIGN(Field);
+    TYPE_MAIN_VARIANT(newTy) = newTy;
+    TYPE_STUB_DECL(newTy) = TYPE_STUB_DECL(oldTy);
+    // Change the name.
+    if (TYPE_NAME(oldTy)) {
+      const char *p = "anon";
+      if (TREE_CODE(TYPE_NAME(oldTy)) ==IDENTIFIER_NODE)
+        p = IDENTIFIER_POINTER(TYPE_NAME(oldTy));
+      else if (DECL_NAME(TYPE_NAME(oldTy)))
+        p = IDENTIFIER_POINTER(DECL_NAME(TYPE_NAME(oldTy)));
+      char *q = (char *)xmalloc(strlen(p)+7);
+      strcpy(q,p);
+      strcat(q,".align");
       TYPE_NAME(newTy) = get_identifier(q);
       free(q);
     }
@@ -1771,12 +1823,12 @@ static tree FixBaseClassField(tree Field) {
 // node for it, but not when A is a nonvirtual base class.  So we can't
 // use that.)
 //
-// If #pragma pack is involved, different derived classes may use different
-// sizes for the base class.  We also alter the types referred to by Field nodes
-// that have greater alignment than the Field does; these might not get the
-// tail padding as a Field that they get elsewhere. To handle these additional
-// cases the size and alignment of the field are used as parts of the index
-// into the map of base classes already created.
+// Also alter the types referred to by Field nodes that have greater alignment
+// than the Field does; these might not get the tail padding as a Field that
+// they get elsewhere.
+//
+// Both transformations can be needed for the same type (in different contexts),
+// so we need two mappings.
 
 static void FixUpFields(tree type) {
   if (TREE_CODE(type)!=RECORD_TYPE)
@@ -1788,15 +1840,27 @@ static void FixUpFields(tree type) {
         TREE_CODE(TREE_TYPE(Field))==RECORD_TYPE &&
         TYPE_SIZE(TREE_TYPE(Field)) &&
         DECL_SIZE(Field) &&
-        ((TREE_CODE(DECL_SIZE(Field))==INTEGER_CST &&
-          TREE_CODE(TYPE_SIZE(TREE_TYPE(Field)))==INTEGER_CST &&
-          TREE_INT_CST_LOW(DECL_SIZE(Field)) < 
-              TREE_INT_CST_LOW(TYPE_SIZE(TREE_TYPE(Field)))) ||
-         (DECL_ALIGN(Field) < TYPE_ALIGN(TREE_TYPE(Field))))) {
+        TREE_CODE(DECL_SIZE(Field))==INTEGER_CST &&
+        TREE_CODE(TYPE_SIZE(TREE_TYPE(Field)))==INTEGER_CST &&
+        TREE_INT_CST_LOW(DECL_SIZE(Field)) < 
+              TREE_INT_CST_LOW(TYPE_SIZE(TREE_TYPE(Field)))) {
       tree newType = FixBaseClassField(Field);
       if (newType != TREE_TYPE(Field)) {
         TREE_TYPE(Field) = newType;
         DECL_FIELD_BASE_REPLACED(Field) = 1;
+      }
+    }
+    if (TREE_CODE(Field)==FIELD_DECL && 
+        !DECL_BIT_FIELD_TYPE(Field) &&
+        TREE_CODE(DECL_FIELD_OFFSET(Field))==INTEGER_CST &&
+        TREE_CODE(TREE_TYPE(Field))==RECORD_TYPE &&
+        TYPE_SIZE(TREE_TYPE(Field)) &&
+        DECL_SIZE(Field) &&
+        DECL_ALIGN(Field) < TYPE_ALIGN(TREE_TYPE(Field))) {
+      tree newType = FixLessAlignedClassField(Field);
+      if (newType != TREE_TYPE(Field)) {
+        TREE_TYPE(Field) = newType;
+        DECL_FIELD_ALIGN_REPLACED(Field) = 1;
       }
     }
   }
@@ -1837,10 +1901,16 @@ static void RestoreOriginalFields(tree type) {
   for (tree Field = TYPE_FIELDS(type); Field; Field = TREE_CHAIN(Field)) {
     if (TREE_CODE(Field) == FIELD_DECL) {
       if (DECL_FIELD_BASE_REPLACED(Field)) {
-        tree &oldTy = BaseTypesMap[std::make_pair(TREE_TYPE(Field), 0U)];
+        tree &oldTy = BaseTypesMap[TREE_TYPE(Field)];
         assert(oldTy);
         TREE_TYPE(Field) = oldTy;
         DECL_FIELD_BASE_REPLACED(Field) = 0;
+      }
+      if (DECL_FIELD_ALIGN_REPLACED(Field)) {
+        tree &oldTy = LessAlignedTypesMap[std::make_pair(TREE_TYPE(Field), 0U)];
+        assert(oldTy);
+        TREE_TYPE(Field) = oldTy;
+        DECL_FIELD_ALIGN_REPLACED(Field) = 0;
       }
     }
   }
@@ -1848,7 +1918,7 @@ static void RestoreOriginalFields(tree type) {
 
 /// DecodeStructFields - This method decodes the specified field, if it is a
 /// FIELD_DECL, adding or updating the specified StructTypeConversionInfo to
-/// reflect it.  Return true if field is decoded correctly. Otherwise return
+/// reflect it.  Return tree if field is decoded correctly. Otherwise return
 /// false.
 bool TypeConverter::DecodeStructFields(tree Field,
                                        StructTypeConversionInfo &Info) {
@@ -2032,93 +2102,17 @@ void TypeConverter::DecodeStructBitField(tree_node *Field,
   Info.addNewBitField(FieldSizeInBits, FirstUnallocatedByte);
 }
 
-/// UnionHasOnlyZeroOffsets - Check if a union type has only members with
-/// offsets that are zero, e.g., no Fortran equivalences.
-static bool UnionHasOnlyZeroOffsets(tree type) {
-  for (tree Field = TYPE_FIELDS(type); Field; Field = TREE_CHAIN(Field)) {
-    if (TREE_CODE(Field) != FIELD_DECL) continue;
-    if (getFieldOffsetInBits(Field) != 0)
-      return false;
-  }
-  return true;
-}
 
-/// SelectUnionMember - Find the union member with the largest aligment.  If
-/// there are multiple types with the same alignment, select the one with
-/// the largest size. If the type with max. align is smaller than other types,
-/// then we will add padding later on anyway to match union size.
-void TypeConverter::SelectUnionMember(tree type,
-                                      StructTypeConversionInfo &Info) {
-  const Type *UnionTy = 0;
-  tree GccUnionTy = 0;
-  tree UnionField = 0;
-  unsigned MaxAlignSize = 0, MaxAlign = 0;
-  for (tree Field = TYPE_FIELDS(type); Field; Field = TREE_CHAIN(Field)) {
-    if (TREE_CODE(Field) != FIELD_DECL) continue;
-    assert(getFieldOffsetInBits(Field) == 0 && "Union with non-zero offset?");
-
-    // Skip fields that are known not to be present.
-    if (TREE_CODE(type) == QUAL_UNION_TYPE &&
-        integer_zerop(DECL_QUALIFIER(Field)))
-      continue;
-
-    tree TheGccTy = TREE_TYPE(Field);
-
-    // Skip zero-length fields; ConvertType refuses to construct a type
-    // of size 0.
-    if (DECL_SIZE(Field) &&
-        TREE_CODE(DECL_SIZE(Field)) == INTEGER_CST &&
-        TREE_INT_CST_LOW(DECL_SIZE(Field)) == 0)
-      continue;
-
-    const Type *TheTy = ConvertType(TheGccTy);
-    unsigned Size  = Info.getTypeSize(TheTy);
-    unsigned Align = Info.getTypeAlignment(TheTy);
-
-    adjustPaddingElement(GccUnionTy, TheGccTy);
-
-    // Select TheTy as union type if it is more aligned than any other.  If
-    // more than one field achieves the maximum alignment then choose the
-    // biggest.
-    if (UnionTy == 0 || Align > MaxAlign ||
-        (Align == MaxAlign && Size > MaxAlignSize)) {
-      UnionTy = TheTy;
-      UnionField = Field;
-      GccUnionTy = TheGccTy;
-      MaxAlignSize = Size;
-      MaxAlign = Align;
-    }
-
-    // Skip remaining fields if this one is known to be present.
-    if (TREE_CODE(type) == QUAL_UNION_TYPE &&
-        integer_onep(DECL_QUALIFIER(Field)))
-      break;
-  }
-
-  if (UnionTy) {            // Not an empty union.
-    if (8 * Info.getTypeAlignment(UnionTy) > TYPE_ALIGN(type))
-      Info.markAsPacked();
-
-    if (isBitfield(UnionField)) {
-      unsigned FieldSizeInBits = TREE_INT_CST_LOW(DECL_SIZE(UnionField));
-      Info.addNewBitField(FieldSizeInBits, 0);
-    } else {
-      Info.allFieldsAreNotBitFields();
-      Info.addElement(UnionTy, 0, Info.getTypeSize(UnionTy));
-    }
-  }
-}
-
-/// ConvertRECORD - Convert a RECORD_TYPE, UNION_TYPE or QUAL_UNION_TYPE to
-/// an LLVM type.
-// A note on C++ virtual base class layout.  Consider the following example:
+/// ConvertRECORD - We know that 'type' is a RECORD_TYPE: convert it to an LLVM
+/// type.
+//  A note on C++ virtual base class layout.  Consider the following example:
 // class A { public: int i0; };
 // class B : public virtual A { public: int i1; };
 // class C : public virtual A { public: int i2; };
 // class D : public virtual B, public virtual C { public: int i3; };
 //
 // The TYPE nodes gcc builds for classes represent that class as it looks
-// standing alone.  Thus B is size 12 and looks like { vptr; i1; baseclass A; }
+// standing alone.  Thus B is size 12 and looks like { vptr; i2; baseclass A; }
 // However, this is not the layout used when that class is a base class for 
 // some other class, yet the same TYPE node is still used.  D in the above has
 // both a BINFO list entry and a FIELD that reference type B, but the virtual
@@ -2144,11 +2138,9 @@ const Type *TypeConverter::ConvertRECORD(tree type, tree orig_type) {
       return Ty;
   }
 
-  bool IsStruct = (TREE_CODE(type) == RECORD_TYPE);
   if (TYPE_SIZE(type) == 0) {   // Forward declaration?
     const Type *Ty = OpaqueType::get(Context);
-    TheModule->addTypeName(GetTypeName(IsStruct ? "struct." : "union.",
-                                       orig_type), Ty);
+    TheModule->addTypeName(GetTypeName("struct.", orig_type), Ty);
     return TypeDB.setType(type, Ty);
   }
 
@@ -2164,40 +2156,29 @@ const Type *TypeConverter::ConvertRECORD(tree type, tree orig_type) {
   // of fields bear some resemblance to reality.  Also alter any fields that
   // are less aligned than their type, as the type may not get tail padding
   // in this case.
-  if (IsStruct)
-    FixUpFields(type);
+  FixUpFields(type);
 
-  // Workaround to get Fortran EQUIVALENCE working.
-  // TODO: Unify record and union logic and handle this optimally.
-  bool HasOnlyZeroOffsets = (!IsStruct && UnionHasOnlyZeroOffsets(type));
-  if (HasOnlyZeroOffsets) {
-    SelectUnionMember(type, *Info);
-  } else {
-    // Convert over all of the elements of the struct.
-    bool retryAsPackedStruct = false;
+  // Convert over all of the elements of the struct.
+  bool retryAsPackedStruct = false;
+  for (tree Field = TYPE_FIELDS(type); Field; Field = TREE_CHAIN(Field)) {
+    if (DecodeStructFields(Field, *Info) == false) {
+      retryAsPackedStruct = true;
+      break;
+    }
+  }
+
+  if (retryAsPackedStruct) {
+    delete Info;
+    Info = new StructTypeConversionInfo(*TheTarget, TYPE_ALIGN(type) / 8, true);
     for (tree Field = TYPE_FIELDS(type); Field; Field = TREE_CHAIN(Field)) {
       if (DecodeStructFields(Field, *Info) == false) {
-        retryAsPackedStruct = true;
-        break;
-      }
-    }
-
-    if (retryAsPackedStruct) {
-      delete Info;
-      Info = new StructTypeConversionInfo(*TheTarget, TYPE_ALIGN(type) / 8,
-                                          true);
-      for (tree Field = TYPE_FIELDS(type); Field; Field = TREE_CHAIN(Field)) {
-        if (DecodeStructFields(Field, *Info) == false) {
-          assert(0 && "Unable to decode struct fields.");
-        }
+        assert(0 && "Unable to decode struct fields.");
       }
     }
   }
 
-  // Insert tail padding if the LLVM struct requires explicit tail padding to
-  // be the same size as the GCC struct or union.  This handles, e.g., "{}" in
-  // C++, and cases where a union has larger alignment than the largest member
-  // does.
+  // If the LLVM struct requires explicit tail padding to be the same size as
+  // the GCC struct, insert tail padding now.  This handles, e.g., "{}" in C++.
   if (TYPE_SIZE(type) && TREE_CODE(TYPE_SIZE(type)) == INTEGER_CST) {
     uint64_t GCCTypeSize = getInt64(TYPE_SIZE_UNIT(type), true);
     uint64_t LLVMStructSize = Info->getSizeAsLLVMStruct();
@@ -2219,23 +2200,25 @@ const Type *TypeConverter::ConvertRECORD(tree type, tree orig_type) {
         if (((GCCTypeSize-LLVMStructSize) % 4) == 0 &&
             (Info->getAlignmentAsLLVMStruct() %
              Info->getTypeAlignment(Type::getInt32Ty(Context))) == 0) {
-          // Insert array of i32.
-          unsigned Int32ArraySize = (GCCTypeSize-LLVMStructSize) / 4;
+          // insert array of i32
+          unsigned Int32ArraySize = (GCCTypeSize-LLVMStructSize)/4;
           const Type *PadTy =
             ArrayType::get(Type::getInt32Ty(Context), Int32ArraySize);
           Info->addElement(PadTy, GCCTypeSize - LLVMLastElementEnd,
                            Int32ArraySize, true /* Padding Element */);
         } else {
-          const Type *PadTy = ArrayType::get(Type::getInt8Ty(Context),
-                                             GCCTypeSize-LLVMStructSize);
+          const Type *PadTy =
+            ArrayType::get(Type::getInt8Ty(Context), GCCTypeSize-LLVMStructSize);
           Info->addElement(PadTy, GCCTypeSize - LLVMLastElementEnd,
                            GCCTypeSize - LLVMLastElementEnd,
                            true /* Padding Element */);
+
         }
       }
     }
   } else
     Info->RemoveExtraBytes();
+
 
   // Now that the LLVM struct is finalized, figure out a safe place to index to
   // and set index values for each FieldDecl that doesn't start at a variable
@@ -2244,52 +2227,45 @@ const Type *TypeConverter::ConvertRECORD(tree type, tree orig_type) {
   for (tree Field = TYPE_FIELDS(type); Field; Field = TREE_CHAIN(Field))
     if (TREE_CODE(Field) == FIELD_DECL &&
         TREE_CODE(DECL_FIELD_OFFSET(Field)) == INTEGER_CST) {
-      if (HasOnlyZeroOffsets) {
-        // Set the field idx to zero for all members of a union.
-        SetFieldIndex(Field, 0);
-      } else {
-        uint64_t FieldOffsetInBits = getFieldOffsetInBits(Field);
-        tree FieldType = getDeclaredType(Field);
-        const Type *FieldTy = ConvertType(FieldType);
+      uint64_t FieldOffsetInBits = getFieldOffsetInBits(Field);
+      tree FieldType = getDeclaredType(Field);
+      const Type *FieldTy = ConvertType(FieldType);
 
-        // If this is a bitfield, we may want to adjust the FieldOffsetInBits
-        // to produce safe code.  In particular, bitfields will be
-        // loaded/stored as their *declared* type, not the smallest integer
-        // type that contains them.  As such, we need to respect the alignment
-        // of the declared type.
-        if (isBitfield(Field)) {
-          // If this is a bitfield, the declared type must be an integral type.
-          unsigned BitAlignment = Info->getTypeAlignment(FieldTy)*8;
+      // If this is a bitfield, we may want to adjust the FieldOffsetInBits to
+      // produce safe code.  In particular, bitfields will be loaded/stored as
+      // their *declared* type, not the smallest integer type that contains
+      // them.  As such, we need to respect the alignment of the declared type.
+      if (isBitfield(Field)) {
+        // If this is a bitfield, the declared type must be an integral type.
+        unsigned BitAlignment = Info->getTypeAlignment(FieldTy)*8;
 
-          FieldOffsetInBits &= ~(BitAlignment-1ULL);
-          // When we fix the field alignment, we must restart the FieldNo
-          // search because the FieldOffsetInBits can be lower than it was in
-          // the previous iteration.
-          CurFieldNo = 0;
+        FieldOffsetInBits &= ~(BitAlignment-1ULL);
+        // When we fix the field alignment, we must restart the FieldNo search
+        // because the FieldOffsetInBits can be lower than it was in the
+        // previous iteration.
+        CurFieldNo = 0;
 
-          // Skip 'int:0', which just affects layout.
-          if (integer_zerop(DECL_SIZE(Field)))
-            continue;
-        }
-
-        // Figure out if this field is zero bits wide, e.g. {} or [0 x int].
-        bool isZeroSizeField = FieldTy->isSized() &&
-          getTargetData().getTypeSizeInBits(FieldTy) == 0;
-
-        unsigned FieldNo =
-          Info->getLLVMFieldFor(FieldOffsetInBits, CurFieldNo, isZeroSizeField);
-        SetFieldIndex(Field, FieldNo);
-
-        assert((isBitfield(Field) || FieldNo == ~0U ||
-                FieldOffsetInBits == 8*Info->ElementOffsetInBytes[FieldNo]) &&
-               "Wrong LLVM field offset!");
+        // Skip 'int:0', which just affects layout.
+        if (integer_zerop(DECL_SIZE(Field)))
+          continue;
       }
+
+      // Figure out if this field is zero bits wide, e.g. {} or [0 x int].
+      bool isZeroSizeField = FieldTy->isSized() &&
+        getTargetData().getTypeSizeInBits(FieldTy) == 0;
+
+      unsigned FieldNo =
+        Info->getLLVMFieldFor(FieldOffsetInBits, CurFieldNo, isZeroSizeField);
+      SetFieldIndex(Field, FieldNo);
+
+      assert((isBitfield(Field) || FieldNo == ~0U ||
+             FieldOffsetInBits == 8*Info->ElementOffsetInBytes[FieldNo]) &&
+             "Wrong LLVM field offset!");
     }
 
   // Put the original gcc struct back the way it was; necessary to prevent the
   // binfo-walking code in cp/class from getting confused.
-  if (IsStruct)
-    RestoreOriginalFields(type);
+  RestoreOriginalFields(type);
 
   const Type *ResultTy = Info->getLLVMType();
   StructTypeInfoMap[type] = Info;
@@ -2303,14 +2279,195 @@ const Type *TypeConverter::ConvertRECORD(tree type, tree orig_type) {
     const_cast<OpaqueType*>(OldTy)->refineAbstractTypeTo(ResultTy);
 
   // Finally, set the name for the type.
-  TheModule->addTypeName(GetTypeName(IsStruct ? "struct." : "union.",
-                                     orig_type), GET_TYPE_LLVM(type));
+  TheModule->addTypeName(GetTypeName("struct.", orig_type),
+                         GET_TYPE_LLVM(type));
 
   // We have finished converting this struct.  See if the is the outer-most
-  // struct or union being converted by ConvertType.
+  // struct being converted by ConvertType.
   ConvertingStruct = OldConvertingStruct;
   if (!ConvertingStruct) {
 
+    // If this is the outer-most level of structness, resolve any pointers
+    // that were deferred.
+    while (!PointersToReresolve.empty()) {
+      if (tree PtrTy = PointersToReresolve.back()) {
+        ConvertType(PtrTy);   // Reresolve this pointer type.
+        assert((PointersToReresolve.empty() ||
+                PointersToReresolve.back() != PtrTy) &&
+               "Something went wrong with pointer resolution!");
+      } else {
+        // Null marker element.
+        PointersToReresolve.pop_back();
+      }
+    }
+  }
+
+  return GET_TYPE_LLVM(type);
+}
+
+
+/// ConvertUNION - We know that 'type' is a UNION_TYPE or a QUAL_UNION_TYPE:
+/// convert it to an LLVM type.
+const Type *TypeConverter::ConvertUNION(tree type, tree orig_type) {
+  if (const Type *Ty = GET_TYPE_LLVM(type)) {
+    // If we already compiled this type, and if it was not a forward
+    // definition that is now defined, use the old type.
+    if (!isa<OpaqueType>(Ty) || TYPE_SIZE(type) == 0)
+      return Ty;
+  }
+
+  if (TYPE_SIZE(type) == 0) {   // Forward declaraion?
+    const Type *Ty = OpaqueType::get(Context);
+    TheModule->addTypeName(GetTypeName("union.", orig_type), Ty);
+    return TypeDB.setType(type, Ty);
+  }
+
+  // Note that we are compiling a struct now.
+  bool OldConvertingStruct = ConvertingStruct;
+  ConvertingStruct = true;
+
+  // Find the type with the largest aligment, and if we have multiple types with
+  // the same alignment, select one with largest size. If type with max. align
+  // is smaller then other types then we will add padding later on anyway to
+  // match union size.
+  const TargetData &TD = getTargetData();
+  const Type *UnionTy = 0;
+  tree GccUnionTy = 0;
+  unsigned MaxAlignSize = 0, MaxAlign = 0;
+  for (tree Field = TYPE_FIELDS(type); Field; Field = TREE_CHAIN(Field)) {
+    if (TREE_CODE(Field) != FIELD_DECL) continue;
+//    assert(getFieldOffsetInBits(Field) == 0 && "Union with non-zero offset?");
+    // Workaround to get Fortran EQUIVALENCE working.
+    // TODO: Unify record and union logic and handle this optimally.
+    if (getFieldOffsetInBits(Field) != 0) {
+      ConvertingStruct = OldConvertingStruct;
+      return ConvertRECORD(type, orig_type);
+    }
+
+    // Set the field idx to zero for all fields.
+    SetFieldIndex(Field, 0);
+
+    // Skip fields that are known not to be present.
+    if (TREE_CODE(type) == QUAL_UNION_TYPE &&
+        integer_zerop(DECL_QUALIFIER(Field)))
+      continue;
+
+    tree TheGccTy = TREE_TYPE(Field);
+
+    // Skip zero-length fields; ConvertType refuses to construct a type
+    // of size 0.
+    if (DECL_SIZE(Field) &&
+        TREE_CODE(DECL_SIZE(Field))==INTEGER_CST &&
+        TREE_INT_CST_LOW(DECL_SIZE(Field))==0)
+      continue;
+#ifdef TARGET_POWERPC
+    // Normally gcc reduces the size of bitfields to the size necessary
+    // to hold the bits, e.g. a 1-bit field becomes QI.  It does not do
+    // this for bool, which is no problem on most targets because
+    // sizeof(bool)==1.  On darwin ppc32, however, sizeof(bool)==4, so
+    // we can have field types bigger than the union type here.  Evade
+    // this by creating an appropriate int type here.
+    //
+    // It's possible this issue is not specific to ppc, but I doubt it.
+
+    if (TREE_CODE(TheGccTy) == BOOLEAN_TYPE &&
+        TYPE_SIZE_UNIT(TheGccTy) &&
+        DECL_SIZE_UNIT(Field) &&
+        TREE_CODE(DECL_SIZE_UNIT(Field)) == INTEGER_CST &&
+        TREE_CODE(TYPE_SIZE_UNIT(TheGccTy)) == INTEGER_CST &&
+        TREE_INT_CST_LOW(TYPE_SIZE_UNIT(TheGccTy)) >
+        TREE_INT_CST_LOW(DECL_SIZE_UNIT(Field))) {
+      bool sign = DECL_UNSIGNED(Field);
+      switch(TREE_INT_CST_LOW(DECL_SIZE_UNIT(Field))) {
+        case 1: TheGccTy = sign ? intQI_type_node : unsigned_intQI_type_node;
+                break;
+        case 2: TheGccTy = sign ? intHI_type_node : unsigned_intHI_type_node;
+                break;
+        case 4: TheGccTy = sign ? intSI_type_node : unsigned_intSI_type_node;
+                break;
+        case 8: TheGccTy = sign ? intDI_type_node : unsigned_intDI_type_node;
+                break;
+        default: assert(0 && "Unexpected field size"); break;
+      }
+    }
+#endif
+    const Type *TheTy = ConvertType(TheGccTy);
+    unsigned Size  = TD.getTypeAllocSize(TheTy);
+    unsigned Align = TD.getABITypeAlignment(TheTy);
+
+    adjustPaddingElement(GccUnionTy, TheGccTy);
+
+    // Select TheTy as union type if it is more aligned than any other.  If more
+    // than one field achieves the maximum alignment then choose the biggest.
+    bool useTheTy;
+    if (UnionTy == 0)
+      useTheTy = true;
+    else if (Align < MaxAlign)
+      useTheTy = false;
+    else if (Align > MaxAlign)
+      useTheTy = true;
+    else if (Size > MaxAlignSize)
+      useTheTy = true;
+    else
+      useTheTy = false;
+
+    if (useTheTy) {
+      UnionTy = TheTy;
+      GccUnionTy = TheGccTy;
+      MaxAlignSize = Size;
+      MaxAlign = Align;
+    }
+
+    // Skip remaining fields if this one is known to be present.
+    if (TREE_CODE(type) == QUAL_UNION_TYPE &&
+        integer_onep(DECL_QUALIFIER(Field)))
+      break;
+  }
+
+  std::vector<const Type*> UnionElts;
+  unsigned EltAlign = 0;
+  unsigned EltSize = 0;
+  if (UnionTy) {            // Not an empty union.
+    EltAlign = TD.getABITypeAlignment(UnionTy);
+    EltSize = TD.getTypeAllocSize(UnionTy);
+    UnionElts.push_back(UnionTy);
+  }
+
+  // If the LLVM struct requires explicit tail padding to be the same size as
+  // the GCC union, insert tail padding now.  This handles cases where the union
+  // has larger alignment than the largest member does, thus requires tail
+  // padding.
+  if (TYPE_SIZE(type) && TREE_CODE(TYPE_SIZE(type)) == INTEGER_CST) {
+    uint64_t GCCTypeSize = getInt64(TYPE_SIZE_UNIT(type), true);
+
+    if (EltSize != GCCTypeSize) {
+      assert(EltSize < GCCTypeSize &&
+             "LLVM type size doesn't match GCC type size!");
+      const Type *PadTy = Type::getInt8Ty(Context);
+      if (GCCTypeSize-EltSize != 1)
+        PadTy = ArrayType::get(PadTy, GCCTypeSize-EltSize);
+      UnionElts.push_back(PadTy);
+    }
+  }
+
+  bool isPacked = 8 * EltAlign > TYPE_ALIGN(type);
+  const Type *ResultTy = StructType::get(Context, UnionElts, isPacked);
+  const OpaqueType *OldTy = cast_or_null<OpaqueType>(GET_TYPE_LLVM(type));
+  TypeDB.setType(type, ResultTy);
+
+  // If there was a forward declaration for this type that is now resolved,
+  // refine anything that used it to the new type.
+  if (OldTy)
+    const_cast<OpaqueType*>(OldTy)->refineAbstractTypeTo(ResultTy);
+
+  // Finally, set the name for the type.
+  TheModule->addTypeName(GetTypeName("struct.", orig_type),
+                         GET_TYPE_LLVM(type));
+
+  // We have finished converting this union.  See if the is the outer-most
+  // union being converted by ConvertType.
+  ConvertingStruct = OldConvertingStruct;
+  if (!ConvertingStruct) {
     // If this is the outer-most level of structness, resolve any pointers
     // that were deferred.
     while (!PointersToReresolve.empty()) {

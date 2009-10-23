@@ -7959,8 +7959,6 @@ iasm_stmt (tree expr, tree args, int lineno)
       stmt = build_stmt (ASM_EXPR, sexpr, NULL_TREE, NULL_TREE, clobbers, NULL_TREE);
       clobbers = NULL_TREE;
       ASM_VOLATILE_P (stmt) = 1;
-      /* LLVM LOCAL */
-      ASM_ASM_BLOCK (stmt) = 1;
       (void)add_stmt (stmt);
     }
 #endif
@@ -7970,8 +7968,6 @@ iasm_stmt (tree expr, tree args, int lineno)
   sexpr = build_string (strlen (iasm_buffer), iasm_buffer);
   stmt = build_stmt (ASM_EXPR, sexpr, NULL_TREE, NULL_TREE, NULL_TREE, NULL_TREE);
   ASM_VOLATILE_P (stmt) = 1;
-  /* LLVM LOCAL */
-  ASM_ASM_BLOCK (stmt) = 1;
   (void)add_stmt (stmt);
 
   /* Build .line "line-number" directive. */
@@ -7979,8 +7975,6 @@ iasm_stmt (tree expr, tree args, int lineno)
   sexpr = build_string (strlen (iasm_buffer), iasm_buffer);
   stmt = build_stmt (ASM_EXPR, sexpr, NULL_TREE, NULL_TREE, NULL_TREE, NULL_TREE);
   ASM_VOLATILE_P (stmt) = 1;
-  /* LLVM LOCAL */
-  ASM_ASM_BLOCK (stmt) = 1;
   (void)add_stmt (stmt);
 
   iasm_buffer[0] = '\0';
@@ -8132,8 +8126,6 @@ iasm_stmt (tree expr, tree args, int lineno)
   /* Treat as volatile always.  */
   stmt = build_stmt (ASM_EXPR, sexpr, outputs, inputs, clobbers, uses);
   ASM_VOLATILE_P (stmt) = 1;
-  /* LLVM LOCAL */
-  ASM_ASM_BLOCK (stmt) = 1;
   add_stmt (stmt);
   input_location.line = saved_lineno;
   return;
@@ -8746,8 +8738,6 @@ iasm_label (tree labid, bool atsign)
   /* Simple asm statements are treated as volatile.  */
   stmt = build_stmt (ASM_EXPR, sexpr, outputs, inputs, clobbers, NULL_TREE);
   ASM_VOLATILE_P (stmt) = 1;
-  /* LLVM LOCAL */
-  ASM_ASM_BLOCK (stmt) = 1;
   stmt = add_stmt (stmt);
 #endif
   return stmt;
@@ -8975,8 +8965,6 @@ iasm_entry (int scspec, tree fn)
       /* Treat as volatile always.  */
       stmt = build_stmt (ASM_EXPR, strlab, NULL_TREE, inputs, NULL_TREE, NULL_TREE);
       ASM_VOLATILE_P (stmt) = 1;
-      /* LLVM LOCAL */
-      ASM_ASM_BLOCK (stmt) = 1;
       add_stmt (stmt);
     }
 
@@ -8984,8 +8972,6 @@ iasm_entry (int scspec, tree fn)
   /* Treat as volatile always.  */
   stmt = build_stmt (ASM_EXPR, strlab, NULL_TREE, inputs, NULL_TREE, NULL_TREE);
   ASM_VOLATILE_P (stmt) = 1;
-  /* LLVM LOCAL */
-  ASM_ASM_BLOCK (stmt) = 1;
   add_stmt (stmt);
 }
 /* APPLE LOCAL end CW asm blocks */

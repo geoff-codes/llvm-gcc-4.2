@@ -40,12 +40,16 @@ Software Foundation, 59 Temple Place - Suite 330, Boston, MA
 #include "llvm/Support/DataTypes.h"
 #include "llvm/Support/IRBuilder.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/Streams.h"
 #include "llvm/Support/TargetFolder.h"
-#include "llvm/Support/raw_os_ostream.h"
 
 extern "C" {
 #include "llvm.h"
 }
+
+/// Internal gcc structure describing an exception handling region.  Declared
+/// here to avoid including all of except.h.
+struct eh_region;
 
 namespace llvm {
   class Module;
@@ -86,6 +90,10 @@ extern TargetFolder *TheFolder;
 
 /// getTargetData - Return the current TargetData object from TheTarget.
 const TargetData &getTargetData();
+
+/// AsmOutFile - A C++ ostream wrapper around asm_out_file.
+///
+extern llvm::OStream *AsmOutFile;
 
 /// AttributeUsedGlobals - The list of globals that are marked attribute(used).
 extern SmallSetVector<Constant *,32> AttributeUsedGlobals;
@@ -168,7 +176,6 @@ private:
   void SetFieldIndex(tree_node *field_decl, unsigned int Index);
   bool DecodeStructFields(tree_node *Field, StructTypeConversionInfo &Info);
   void DecodeStructBitField(tree_node *Field, StructTypeConversionInfo &Info);
-  void SelectUnionMember(tree_node *type, StructTypeConversionInfo &Info);
 };
 
 extern TypeConverter *TheTypeConverter;
@@ -642,5 +649,5 @@ public:
   
 };
 
-#endif /* LLVM_INTERNAL_H */
+#endif
 /* LLVM LOCAL end (ENTIRE FILE!)  */

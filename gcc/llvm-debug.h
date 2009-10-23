@@ -28,10 +28,8 @@ Software Foundation, 59 Temple Place - Suite 330, Boston, MA
 #ifndef LLVM_DEBUG_H
 #define LLVM_DEBUG_H
 
-#include "llvm-internal.h"
 #include "llvm/Analysis/DebugInfo.h"
 #include "llvm/Support/Dwarf.h"
-#include "llvm/Support/ValueHandle.h"
 
 extern "C" {
 #include "llvm.h"
@@ -61,8 +59,8 @@ private:
   const char *PrevFullPath;             // Previous location file encountered.
   int PrevLineNo;                       // Previous location line# encountered.
   BasicBlock *PrevBB;                   // Last basic block encountered.
-  std::map<std::string, WeakVH > CUCache;
-  std::map<tree_node *, WeakVH > TypeCache;
+  std::map<std::string, GlobalVariable *> CUCache;
+  std::map<tree_node *, DIType> TypeCache;
                                         // Cache of previously constructed 
                                         // Types.
   std::vector<DIDescriptor> RegionStack;
@@ -85,9 +83,13 @@ public:
   /// "llvm.dbg.func.start."
   void EmitFunctionStart(tree_node *FnDecl, Function *Fn, BasicBlock *CurBB);
 
-  /// EmitFunctionEnd - Constructs the debug code for exiting a declarative
+  /// EmitRegionStart- Constructs the debug code for entering a declarative
+  /// region - "llvm.dbg.region.start."
+  void EmitRegionStart(BasicBlock *CurBB);
+
+  /// EmitRegionEnd - Constructs the debug code for exiting a declarative
   /// region - "llvm.dbg.region.end."
-  void EmitFunctionEnd(BasicBlock *CurBB, bool EndFunction);
+  void EmitRegionEnd(BasicBlock *CurBB, bool EndFunction);
 
   /// EmitDeclare - Constructs the debug code for allocation of a new variable.
   /// region - "llvm.dbg.declare."
@@ -97,7 +99,7 @@ public:
 
   /// EmitStopPoint - Emit a call to llvm.dbg.stoppoint to indicate a change of 
   /// source line.
-  void EmitStopPoint(Function *Fn, BasicBlock *CurBB, LLVMBuilder &Builder);
+  void EmitStopPoint(Function *Fn, BasicBlock *CurBB);
                      
   /// EmitGlobalVariable - Emit information about a global variable.
   ///
@@ -138,5 +140,5 @@ public:
 
 } // end namespace llvm
 
-#endif /* LLVM_DEBUG_H */
+#endif
 /* LLVM LOCAL end (ENTIRE FILE!)  */

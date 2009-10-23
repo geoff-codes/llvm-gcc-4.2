@@ -41,12 +41,10 @@ Boston, MA 02110-1301, USA.  */
 
 /* This must agree with <machine/ansi.h> */
 #undef SIZE_TYPE
-/* LLVM local */
-#define SIZE_TYPE "long unsigned int"
+#define SIZE_TYPE "unsigned int"
 
 #undef PTRDIFF_TYPE
-/* LLVM local */
-#define PTRDIFF_TYPE "long int"
+#define PTRDIFF_TYPE "int"
 
 #undef WCHAR_TYPE
 #define WCHAR_TYPE "int"
@@ -54,11 +52,6 @@ Boston, MA 02110-1301, USA.  */
 #undef WCHAR_TYPE_SIZE
 #define WCHAR_TYPE_SIZE 32
 
-/* LLVM local begin */
-#undef WINT_TYPE
-#define WINT_TYPE "int"
-
-/* LLVM local end */
 /* Assembler format: overall framework.  */
 
 #undef ASM_APP_ON

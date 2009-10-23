@@ -49,6 +49,7 @@ Software Foundation, 59 Temple Place - Suite 330, Boston, MA
 #include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/StandardPasses.h"
+#include "llvm/Support/Streams.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/System/Program.h"
 
@@ -92,6 +93,8 @@ DebugInfo *TheDebugInfo = 0;
 TargetMachine *TheTarget = 0;
 TargetFolder *TheFolder = 0;
 TypeConverter *TheTypeConverter = 0;
+llvm::OStream *AsmOutFile = 0;
+llvm::OStream *AsmIntermediateOutFile = 0;
 
 /// DisableLLVMOptimizations - Allow the user to specify:
 /// "-mllvm -disable-llvm-optzns" on the llvm-gcc command line to force llvm
@@ -349,13 +352,28 @@ namespace llvm {
 }
 
 // GuessAtInliningThreshold - Figure out a reasonable threshold to pass llvm's
-// inliner.  gcc has many options that control inlining, but we have decided
-// not to support anything like that for llvm-gcc.
+// inliner.  There are 12 user-settable gcc params that affect inlining.  llvm
+// (so far) only has one knob; the param that corresponds most closely, and
+// which we use, is max-inline-insns-auto (set by -finline-limit, which is
+// what most users actually use).  This maps only very approximately to what
+// llvm's inliner is doing, but it's the best we've got.
 static unsigned GuessAtInliningThreshold() {
   unsigned threshold = 200;
-  if (optimize_size || optimize < 3)
-    // Reduce inline limit.
-    threshold = 50;
+  // Get the default value for gcc's max-inline-insns-auto.  This is the value
+  // after all language and target dependent changes to the global default are
+  // applied, but before parsing the command line.
+  unsigned default_miia = default_max_inline_insns_auto;
+  // See if the actual value is the same as the default.
+  unsigned miia = MAX_INLINE_INSNS_AUTO;
+  if (miia == default_miia) {
+    if (optimize_size || optimize < 3)
+      // Reduce inline limit.
+      threshold = 50;
+  } else {
+    // We have an overriding user-specified value.  Multiply by 20/9, which is
+    // the Magic Number converting 90 to 200.
+    threshold = miia * 20 / 9;
+  }
   return threshold;
 }
 
@@ -396,7 +414,7 @@ void llvm_initialize_backend(void) {
     Args.push_back("--disable-fp-elim");
   if (!flag_zero_initialized_in_bss)
     Args.push_back("--nozero-initialized-in-bss");
-  if (flag_verbose_asm)
+  if (flag_debug_asm)
     Args.push_back("--asm-verbose");
   if (flag_debug_pass_structure)
     Args.push_back("--debug-pass=Structure");
@@ -472,7 +490,7 @@ void llvm_initialize_backend(void) {
   const Target *TME =
     TargetRegistry::lookupTarget(TargetTriple, Err);
   if (!TME) {
-    errs() << "Did not get a target machine! Triplet is " << TargetTriple<<'\n';
+    cerr << "Did not get a target machine! Triplet is " << TargetTriple << '\n';
     exit(1);
   }
 
@@ -559,8 +577,8 @@ void llvm_pch_read(const unsigned char *Buffer, unsigned Size) {
   }
 
   if (!TheModule) {
-    errs() << "Error reading bytecodes from PCH file\n";
-    errs() << ErrMsg << "\n";
+    cerr << "Error reading bytecodes from PCH file\n";
+    cerr << ErrMsg << "\n";
     exit(1);
   }
 
@@ -587,6 +605,7 @@ void llvm_pch_write_init(void) {
   AsmOutRawStream =
     new formatted_raw_ostream(*new raw_os_ostream(*AsmOutStream),
                               formatted_raw_ostream::DELETE_STREAM);
+  AsmOutFile = new OStream(*AsmOutStream);
 
   PerModulePasses = new PassManager();
   PerModulePasses->add(new TargetData(*TheTarget->getTargetData()));
@@ -597,7 +616,7 @@ void llvm_pch_write_init(void) {
 
   // Emit an LLVM .bc file to the output.  This is used when passed
   // -emit-llvm -c to the GCC driver.
-  PerModulePasses->add(createBitcodeWriterPass(*AsmOutRawStream));
+  PerModulePasses->add(CreateBitcodeWriterPass(*AsmOutStream));
   
   // Disable emission of .ident into the output file... which is completely
   // wrong for llvm/.bc emission cases.
@@ -655,14 +674,13 @@ static void createPerFunctionOptimizationPasses() {
     FunctionPassManager *PM = PerFunctionPasses;    
     HasPerFunctionPasses = true;
 
-    CodeGenOpt::Level OptLevel = CodeGenOpt::Default;  // -O2, -Os, and -Oz
-    if (optimize == 0)
-      OptLevel = CodeGenOpt::None;
-    else if (optimize == 1)
-      OptLevel = CodeGenOpt::Less;
-    else if (optimize == 3)
-      // -O3 and above.
-      OptLevel = CodeGenOpt::Aggressive;
+    CodeGenOpt::Level OptLevel = CodeGenOpt::Default;
+
+    switch (optimize) {
+    default: break;
+    case 0: OptLevel = CodeGenOpt::None; break;
+    case 3: OptLevel = CodeGenOpt::Aggressive; break;
+    }
 
     // Normal mode, emit a .s file by running the code generator.
     // Note, this also adds codegenerator level optimization passes.
@@ -671,7 +689,7 @@ static void createPerFunctionOptimizationPasses() {
                                            OptLevel)) {
     default:
     case FileModel::Error:
-      errs() << "Error interfacing to target machine!\n";
+      cerr << "Error interfacing to target machine!\n";
       exit(1);
     case FileModel::AsmFile:
       break;
@@ -679,7 +697,7 @@ static void createPerFunctionOptimizationPasses() {
 
     if (TheTarget->addPassesToEmitFileFinish(*PM, (MachineCodeEmitter *)0,
                                              OptLevel)) {
-      errs() << "Error interfacing to target machine!\n";
+      cerr << "Error interfacing to target machine!\n";
       exit(1);
     }
   }
@@ -732,7 +750,7 @@ static void createPerModuleOptimizationPasses() {
   if (emit_llvm_bc) {
     // Emit an LLVM .bc file to the output.  This is used when passed
     // -emit-llvm -c to the GCC driver.
-    PerModulePasses->add(createBitcodeWriterPass(*AsmOutRawStream));
+    PerModulePasses->add(CreateBitcodeWriterPass(*AsmOutStream));
     HasPerModulePasses = true;
   } else if (emit_llvm) {
     // Emit an LLVM .ll file to the output.  This is used when passed 
@@ -766,7 +784,7 @@ static void createPerModuleOptimizationPasses() {
                                              OptLevel)) {
       default:
       case FileModel::Error:
-        errs() << "Error interfacing to target machine!\n";
+        cerr << "Error interfacing to target machine!\n";
         exit(1);
       case FileModel::AsmFile:
         break;
@@ -774,7 +792,7 @@ static void createPerModuleOptimizationPasses() {
 
       if (TheTarget->addPassesToEmitFileFinish(*PM, (MachineCodeEmitter *)0,
                                                OptLevel)) {
-        errs() << "Error interfacing to target machine!\n";
+        cerr << "Error interfacing to target machine!\n";
         exit(1);
       }
     }
@@ -794,6 +812,8 @@ void llvm_asm_file_start(void) {
   AsmOutRawStream =
     new formatted_raw_ostream(*new raw_os_ostream(*AsmOutStream),
                               formatted_raw_ostream::DELETE_STREAM);
+  AsmOutFile = new OStream(*AsmOutStream);
+
   flag_llvm_pch_read = 0;
 
   if (emit_llvm_bc || emit_llvm)
@@ -823,7 +843,7 @@ static void CreateStructorsList(std::vector<std::pair<Constant*, int> > &Tors,
   const Type *FPTy =
     FunctionType::get(Type::getVoidTy(Context),
                       std::vector<const Type*>(), false);
-  FPTy = FPTy->getPointerTo();
+  FPTy = PointerType::getUnqual(FPTy);
   
   for (unsigned i = 0, e = Tors.size(); i != e; ++i) {
     StructInit[0] = ConstantInt::get(Type::getInt32Ty(Context), Tors[i].second);
@@ -862,7 +882,7 @@ void llvm_asm_file_end(void) {
 
   if (!AttributeUsedGlobals.empty()) {
     std::vector<Constant *> AUGs;
-    const Type *SBP= Type::getInt8PtrTy(Context);
+    const Type *SBP= PointerType::getUnqual(Type::getInt8Ty(Context));
     for (SmallSetVector<Constant *,32>::iterator
            AI = AttributeUsedGlobals.begin(),
            AE = AttributeUsedGlobals.end(); AI != AE; ++AI) {
@@ -881,7 +901,7 @@ void llvm_asm_file_end(void) {
 
   if (!AttributeCompilerUsedGlobals.empty()) {
     std::vector<Constant *> ACUGs;
-    const Type *SBP= Type::getInt8PtrTy(Context);
+    const Type *SBP= PointerType::getUnqual(Type::getInt8Ty(Context));
     for (SmallSetVector<Constant *,32>::iterator
            AI = AttributeCompilerUsedGlobals.begin(),
            AE = AttributeCompilerUsedGlobals.end(); AI != AE; ++AI) {
@@ -926,10 +946,11 @@ void llvm_asm_file_end(void) {
     strcat(&asm_intermediate_out_filename[0],".0");
     FILE *asm_intermediate_out_file = fopen(asm_intermediate_out_filename, "w+b");
     AsmIntermediateOutStream = new oFILEstream(asm_intermediate_out_file);
+    AsmIntermediateOutFile = new OStream(*AsmIntermediateOutStream);
     raw_ostream *AsmIntermediateRawOutStream = 
       new raw_os_ostream(*AsmIntermediateOutStream);
     if (emit_llvm_bc)
-     IntermediatePM->add(createBitcodeWriterPass(*AsmIntermediateRawOutStream));
+      IntermediatePM->add(CreateBitcodeWriterPass(*AsmIntermediateOutStream));
     if (emit_llvm)
       IntermediatePM->add(createPrintModulePass(AsmIntermediateRawOutStream));
     IntermediatePM->run(*TheModule);
@@ -940,6 +961,8 @@ void llvm_asm_file_end(void) {
     fflush(asm_intermediate_out_file);
     delete AsmIntermediateOutStream;
     AsmIntermediateOutStream = 0;
+    delete AsmIntermediateOutFile;
+    AsmIntermediateOutFile = 0;
   }
 
   // Run module-level optimizers, if any are present.
@@ -964,6 +987,8 @@ void llvm_asm_file_end(void) {
   AsmOutRawStream = 0;
   delete AsmOutStream;
   AsmOutStream = 0;
+  delete AsmOutFile;
+  AsmOutFile = 0;
   timevar_pop(TV_LLVM_PERFILE);
 }
 
@@ -1030,6 +1055,8 @@ void emit_alias_to_llvm(tree decl, tree target, tree target_decl) {
     TREE_ASM_WRITTEN(decl) = 1;
     return;  // Do not process broken code.
   }
+  
+  LLVMContext &Context = getGlobalContext();
 
   timevar_push(TV_LLVM_GLOBALS);
 
@@ -1159,7 +1186,7 @@ void AddAnnotateAttrsToGlobal(GlobalValue *GV, tree decl) {
   Constant *lineNo = ConstantInt::get(Type::getInt32Ty(Context),
                                       DECL_SOURCE_LINE(decl));
   Constant *file = ConvertMetadataStringToGV(DECL_SOURCE_FILE(decl));
-  const Type *SBP= Type::getInt8PtrTy(Context);
+  const Type *SBP= PointerType::getUnqual(Type::getInt8Ty(Context));
   file = TheFolder->CreateBitCast(file, SBP);
  
   // There may be multiple annotate attributes. Pass return of lookup_attr 
@@ -1227,6 +1254,8 @@ void reset_type_and_initializer_llvm(tree decl) {
   // been set.  Don't crash.
   // We can also get here when DECL_LLVM has not been set for some object
   // referenced in the initializer.  Don't crash then either.
+  LLVMContext &Context = getGlobalContext();
+  
   if (errorcount || sorrycount)
     return;
 
@@ -1291,6 +1320,8 @@ void emit_global_to_llvm(tree decl) {
   // If we encounter a forward declaration then do not emit the global yet.
   if (!TYPE_SIZE(TREE_TYPE(decl)))
     return;
+
+  LLVMContext &Context = getGlobalContext();
 
   timevar_push(TV_LLVM_GLOBALS);
 
@@ -1406,16 +1437,8 @@ void emit_global_to_llvm(tree decl) {
       unsigned TargetAlign =
         getTargetData().getABITypeAlignment(GV->getType()->getElementType());
       if (DECL_USER_ALIGN(decl) ||
-          8 * TargetAlign < (unsigned)DECL_ALIGN(decl)) {
+          8 * TargetAlign < (unsigned)DECL_ALIGN(decl))
         GV->setAlignment(DECL_ALIGN(decl) / 8);
-      }
-#ifdef TARGET_ADJUST_CSTRING_ALIGN
-      else if (DECL_INITIAL(decl) != error_mark_node && // uninitialized?
-               DECL_INITIAL(decl) &&
-               TREE_CODE(DECL_INITIAL(decl)) == STRING_CST) {
-        TARGET_ADJUST_CSTRING_ALIGN(GV);
-      }
-#endif
     }
 
     // Handle used decls
@@ -1468,6 +1491,7 @@ void emit_global_to_llvm(tree decl) {
 /// well-formed.  If not, emit error messages and return true.  If so, return
 /// false.
 bool ValidateRegisterVariable(tree decl) {
+  LLVMContext &Context = getGlobalContext();
   int RegNumber = decode_reg_name(extractRegisterName(decl));
   const Type *Ty = ConvertType(TREE_TYPE(decl));
 
@@ -1631,7 +1655,7 @@ void make_decl_llvm(tree decl) {
 
     // If we have "extern void foo", make the global have type {} instead of
     // type void.
-    if (Ty->isVoidTy())
+    if (Ty == Type::getVoidTy(Context))
       Ty = StructType::get(Context);
 
     if (Name[0] == 0) {   // Global has no name.
@@ -1791,13 +1815,9 @@ void llvm_emit_file_scope_asm(const char *string) {
 /// print_llvm - Print the specified LLVM chunk like an operand, called by
 /// print-tree.c for tree dumps.
 void print_llvm(FILE *file, void *LLVM) {
-  // FIXME: oFILEstream can probably be removed in favor of a new raw_ostream
-  // adaptor which would be simpler and more efficient.  In the meantime, just
-  // adapt the adaptor.
   oFILEstream FS(file);
-  raw_os_ostream FSS(FS);
-  FSS << "LLVM: ";
-  WriteAsOperand(FSS, (Value*)LLVM, true, TheModule);
+  FS << "LLVM: ";
+  WriteAsOperand(FS, (Value*)LLVM, true, TheModule);
 }
 
 /// print_llvm_type - Print the specified LLVM type symbolically, called by

@@ -43,7 +43,6 @@ extern "C" {
 #include "toplev.h"
 #include "tree.h"
 #include "version.h"
-#include "function.h"
 }
 
 using namespace llvm;
@@ -211,23 +210,6 @@ DebugInfo::DebugInfo(Module *m)
 , RegionStack()
 {}
 
-/// isCopyOrDestroyHelper - Returns boolean indicating if FnDecl is for
-/// one of the compiler-generated "helper" functions for Apple Blocks
-/// (a copy helper or a destroy helper).  Such functions should not have
-/// debug line table entries.
-bool isCopyOrDestroyHelper (tree FnDecl) {
-  const char *name = IDENTIFIER_POINTER(DECL_NAME(FnDecl));
-
-  if (!BLOCK_SYNTHESIZED_FUNC(FnDecl))
-    return false;
-
-  if (strstr(name, "_copy_helper_block_")
-      || strstr(name, "_destroy_helper_block_"))
-    return true;
-  else
-    return false;
-}
-
 /// EmitFunctionStart - Constructs the debug code for entering a function -
 /// "llvm.dbg.func.start."
 void DebugInfo::EmitFunctionStart(tree FnDecl, Function *Fn,
@@ -236,23 +218,18 @@ void DebugInfo::EmitFunctionStart(tree FnDecl, Function *Fn,
   expanded_location Loc = GetNodeLocation(FnDecl, false);
   const char *LinkageName = getLinkageName(FnDecl);
 
-  unsigned lineno = CurLineNo;
-  if (isCopyOrDestroyHelper(FnDecl))
-    lineno = 0;
-    
   DISubprogram SP = 
     DebugFactory.CreateSubprogram(findRegion(FnDecl),
                                   lang_hooks.dwarf_name(FnDecl, 0),
                                   lang_hooks.dwarf_name(FnDecl, 0),
                                   LinkageName,
-                                  getOrCreateCompileUnit(Loc.file), lineno,
+                                  getOrCreateCompileUnit(Loc.file), CurLineNo,
                                   getOrCreateType(TREE_TYPE(FnDecl)),
                                   Fn->hasInternalLinkage(),
                                   true /*definition*/);
 
-#ifndef ATTACH_DEBUG_INFO_TO_AN_INSN
   DebugFactory.InsertSubprogramStart(SP, CurBB);
-#endif
+
   // Push function on region stack.
   RegionStack.push_back(SP);
   RegionMap[FnDecl] = SP;
@@ -289,13 +266,22 @@ DIDescriptor DebugInfo::findRegion(tree Node) {
   return getOrCreateCompileUnit(main_input_filename);
 }
 
-/// EmitFunctionEnd - Constructs the debug code for exiting a declarative
+/// EmitRegionStart- Constructs the debug code for entering a declarative
+/// region - "llvm.dbg.region.start."
+void DebugInfo::EmitRegionStart(BasicBlock *CurBB) {
+  llvm::DIDescriptor D;
+  if (!RegionStack.empty())
+    D = RegionStack.back();
+  D = DebugFactory.CreateBlock(D);
+  RegionStack.push_back(D);
+  DebugFactory.InsertRegionStart(D, CurBB);
+}
+
+/// EmitRegionEnd - Constructs the debug code for exiting a declarative
 /// region - "llvm.dbg.region.end."
-void DebugInfo::EmitFunctionEnd(BasicBlock *CurBB, bool EndFunction) {
+void DebugInfo::EmitRegionEnd(BasicBlock *CurBB, bool EndFunction) {
   assert(!RegionStack.empty() && "Region stack mismatch, stack empty!");
-#ifndef ATTACH_DEBUG_INFO_TO_AN_INSN
   DebugFactory.InsertRegionEnd(RegionStack.back(), CurBB);
-#endif
   RegionStack.pop_back();
   // Blocks get erased; clearing these is needed for determinism, and also
   // a good idea if the next function gets inlined.
@@ -333,34 +319,10 @@ void DebugInfo::EmitDeclare(tree decl, unsigned Tag, const char *Name,
   DebugFactory.InsertDeclare(AI, D, CurBB);
 }
 
-
-/// isPartOfAppleBlockPrologue - Return boolean indicating if the line number
-/// passed in is part of the prologue of an Apple Block function.  This assumes
-/// the line number passed in belongs to the "current" function.
-bool isPartOfAppleBlockPrologue (unsigned lineno) {
-  if (!cfun  || !cfun->decl)
-    return false;
-  
-  // In an earlier part of gcc, code that sets up Apple Block by-reference
-  // variables at the beginning of the function (which should be part of the
-  // prologue but isn't), is assigned a source location line of one before the
-  // function decl.  So we check for that here:
-  
-  if (BLOCK_SYNTHESIZED_FUNC(cfun->decl)) {
-    int fn_decl_line = DECL_SOURCE_LINE(cfun->decl);
-    if (lineno == (unsigned)(fn_decl_line - 1))
-      return true;
-    else
-      return false;
-  }
-  
-  return false;
-}
-
 /// EmitStopPoint - Emit a call to llvm.dbg.stoppoint to indicate a change of 
 /// source line - "llvm.dbg.stoppoint."  Now enabled at -O.
-void DebugInfo::EmitStopPoint(Function *Fn, BasicBlock *CurBB,
-                              LLVMBuilder &Builder) {
+void DebugInfo::EmitStopPoint(Function *Fn, BasicBlock *CurBB) {
+
   // Don't bother if things are the same as last time.
   if (PrevLineNo == CurLineNo &&
       PrevBB == CurBB &&
@@ -372,26 +334,10 @@ void DebugInfo::EmitStopPoint(Function *Fn, BasicBlock *CurBB,
   PrevFullPath = CurFullPath;
   PrevLineNo = CurLineNo;
   PrevBB = CurBB;
-
-  // Don't set/allow source line breakpoints in Apple Block prologue code
-  // or in Apple Block helper functions.
-  if (!isPartOfAppleBlockPrologue(CurLineNo)
-      && !isCopyOrDestroyHelper(cfun->decl)) {
-#ifdef ATTACH_DEBUG_INFO_TO_AN_INSN
-    if (RegionStack.empty())
-      return;
-    llvm::DIDescriptor DR = RegionStack.back();
-    llvm::DIScope DS = llvm::DIScope(DR.getNode());
-    llvm::DILocation DO(NULL);
-    llvm::DILocation DL = 
-      DebugFactory.CreateLocation(CurLineNo, 0 /* column */, DS, DO);
-    Builder.SetCurrentDebugLocation(DL.getNode());
-#else
-    DebugFactory.InsertStopPoint(getOrCreateCompileUnit(CurFullPath), 
-                                 CurLineNo, 0 /*column no. */,
-                                 CurBB);
-#endif
-  }
+  
+  DebugFactory.InsertStopPoint(getOrCreateCompileUnit(CurFullPath), 
+                               CurLineNo, 0 /*column no. */,
+                               CurBB);
 }
 
 /// EmitGlobalVariable - Emit information about a global variable.
@@ -455,7 +401,6 @@ DIType DebugInfo::createBasicType(tree type) {
     break;
   }
   }
-
   return 
     DebugFactory.CreateBasicType(getOrCreateCompileUnit(main_input_filename),
                                  TypeName, 
@@ -499,19 +444,14 @@ DIType DebugInfo::createPointerType(tree type) {
                   TREE_CODE(type) == BLOCK_POINTER_TYPE) ?
     DW_TAG_pointer_type :
     DW_TAG_reference_type;
-  unsigned Flags = 0;
-  if (type_is_block_byref_struct(type))
-    Flags |= llvm::DIType::FlagBlockByrefStruct;
   expanded_location Loc = GetNodeLocation(type);
-
-  const char *PName = FromTy.getName();
-  return  DebugFactory.CreateDerivedType(Tag, findRegion(type), PName,
+  return  DebugFactory.CreateDerivedType(Tag, findRegion(type), "", 
                                          getOrCreateCompileUnit(NULL), 
                                          0 /*line no*/, 
                                          NodeSizeInBits(type),
                                          NodeAlignInBits(type),
                                          0 /*offset */, 
-                                         Flags, 
+                                         0 /* flags */, 
                                          FromTy);
 }
 
@@ -636,26 +576,13 @@ DIType DebugInfo::createStructType(tree type) {
   // recursive) and replace all  uses of the forward declaration with the 
   // final definition. 
   expanded_location Loc = GetNodeLocation(TREE_CHAIN(type), false);
-  // FIXME: findRegion() is not able to find context all the time. This
-  // means when type names in different context match then FwdDecl is
-  // reused because MDNodes are uniqued. To avoid this, use type context
-  /// also while creating FwdDecl for now.
-  std::string FwdName;
-  if (TYPE_CONTEXT(type))
-    FwdName = GetNodeName(TYPE_CONTEXT(type));
-  FwdName = FwdName + GetNodeName(type);
-  unsigned Flags = llvm::DIType::FlagFwdDecl;
-  if (TYPE_BLOCK_IMPL_STRUCT(type))
-    Flags |= llvm::DIType::FlagAppleBlock;
-  if (type_is_block_byref_struct(type))
-    Flags |= llvm::DIType::FlagBlockByrefStruct;
   llvm::DICompositeType FwdDecl =
     DebugFactory.CreateCompositeType(Tag, 
                                      findRegion(type),
-                                     FwdName,
+                                     GetNodeName(type),
                                      getOrCreateCompileUnit(Loc.file), 
                                      Loc.line, 
-                                     0, 0, 0, Flags,
+                                     0, 0, 0, llvm::DIType::FlagFwdDecl,
                                      llvm::DIType(), llvm::DIArray(),
                                      RunTimeLang);
   
@@ -664,17 +591,20 @@ DIType DebugInfo::createStructType(tree type) {
     return FwdDecl;
   
   // Insert into the TypeCache so that recursive uses will find it.
-  TypeCache[type] =  WeakVH(FwdDecl.getNode());
+  TypeCache[type] =  FwdDecl;
   
   // Convert all the elements.
   llvm::SmallVector<llvm::DIDescriptor, 16> EltTys;
   
   if (tree binfo = TYPE_BINFO(type)) {
+    VEC (tree, gc) *accesses = BINFO_BASE_ACCESSES (binfo);
+    
     for (unsigned i = 0, e = BINFO_N_BASE_BINFOS(binfo); i != e; ++i) {
       tree BInfo = BINFO_BASE_BINFO(binfo, i);
       tree BInfoType = BINFO_TYPE (BInfo);
       DIType BaseClass = getOrCreateType(BInfoType);
       
+      expanded_location loc = GetNodeLocation(type);
       // FIXME : name, size, align etc...
       DIType DTy = 
         DebugFactory.CreateDerivedType(DW_TAG_inheritance, 
@@ -754,14 +684,14 @@ DIType DebugInfo::createStructType(tree type) {
   
   llvm::DIArray Elements =
     DebugFactory.GetOrCreateArray(EltTys.data(), EltTys.size());
-
+  
   llvm::DICompositeType RealDecl =
     DebugFactory.CreateCompositeType(Tag, findRegion(type),
                                      GetNodeName(type),
                                      getOrCreateCompileUnit(Loc.file),
                                      Loc.line, 
                                      NodeSizeInBits(type), NodeAlignInBits(type),
-                                     0, Flags, llvm::DIType(), Elements,
+                                     0, 0, llvm::DIType(), Elements,
                                      RunTimeLang);
   
   // Now that we have a real decl for the struct, replace anything using the
@@ -774,15 +704,11 @@ DIType DebugInfo::createStructType(tree type) {
 DIType DebugInfo::createVariantType(tree type, DIType MainTy) {
   
   DIType Ty;
-  if (tree TyDef = TYPE_NAME(type)) {
-      std::map<tree_node *, WeakVH >::iterator I = TypeCache.find(TyDef);
-      if (I != TypeCache.end())
-	if (Value *M = I->second)
-	  return DIType(cast<MDNode>(M));
-    if (TREE_CODE(TyDef) == TYPE_DECL &&  DECL_ORIGINAL_TYPE(TyDef)) {
-      expanded_location TypeDefLoc = GetNodeLocation(TyDef);
-      Ty = DebugFactory.CreateDerivedType(DW_TAG_typedef, findRegion(TyDef),
-                                          GetNodeName(TyDef), 
+  if (tree Name = TYPE_NAME(type)) {
+    if (TREE_CODE(Name) == TYPE_DECL &&  DECL_ORIGINAL_TYPE(Name)) {
+      expanded_location TypeDefLoc = GetNodeLocation(Name);
+      Ty = DebugFactory.CreateDerivedType(DW_TAG_typedef, findRegion(type),
+                                          GetNodeName(Name), 
                                           getOrCreateCompileUnit(TypeDefLoc.file),
                                           TypeDefLoc.line,
                                           0 /*size*/,
@@ -790,7 +716,8 @@ DIType DebugInfo::createVariantType(tree type, DIType MainTy) {
                                           0 /*offset */, 
                                           0 /*flags*/, 
                                           MainTy);
-      TypeCache[TyDef] = WeakVH(Ty.getNode());
+      // Set the slot early to prevent recursion difficulties.
+      TypeCache[type] = Ty;
       return Ty;
     }
   }
@@ -820,7 +747,7 @@ DIType DebugInfo::createVariantType(tree type, DIType MainTy) {
                                          MainTy);
   
   if (TYPE_VOLATILE(type) || TYPE_READONLY(type)) {
-    TypeCache[type] = WeakVH(Ty.getNode());
+    TypeCache[type] = Ty;
     return Ty;
   }
 
@@ -840,14 +767,17 @@ DIType DebugInfo::getOrCreateType(tree type) {
   if (TREE_CODE(type) == VOID_TYPE) return DIType();
   
   // Check to see if the compile unit already has created this type.
-  std::map<tree_node *, WeakVH >::iterator I = TypeCache.find(type);
-  if (I != TypeCache.end())
-    if (Value *M = I->second)
-      return DIType(cast<MDNode>(M));
-
+  DIType &Slot = TypeCache[type];
+  if (!Slot.isNull())
+    return Slot;
+  
   DIType MainTy;
-  if (type != TYPE_MAIN_VARIANT(type) && TYPE_MAIN_VARIANT(type))
-    MainTy = getOrCreateType(TYPE_MAIN_VARIANT(type));
+  if (type != TYPE_MAIN_VARIANT(type)) {
+    if (TYPE_NEXT_VARIANT(type) && type != TYPE_NEXT_VARIANT(type))
+      MainTy = getOrCreateType(TYPE_NEXT_VARIANT(type));
+    else if (TYPE_MAIN_VARIANT(type))
+      MainTy = getOrCreateType(TYPE_MAIN_VARIANT(type));
+  }
 
   DIType Ty = createVariantType(type, MainTy);
   if (!Ty.isNull())
@@ -865,19 +795,10 @@ DIType DebugInfo::getOrCreateType(tree type) {
     
     case POINTER_TYPE:
     case REFERENCE_TYPE:
-      // Do not cache pointer type. The pointer may point to forward declared
-      // struct.
-      return createPointerType(type);
+    case BLOCK_POINTER_TYPE:
+      Ty = createPointerType(type);
       break;
-
-    case BLOCK_POINTER_TYPE: {
-      DEBUGASSERT (generic_block_literal_struct_type && 
-                   "Generic struct type for Blocks is missing!");
-      tree tmp_type = build_pointer_type(generic_block_literal_struct_type);
-      Ty = createPointerType(tmp_type);
-      break;
-    }
-
+    
     case OFFSET_TYPE: {
       // gen_type_die(TYPE_OFFSET_BASETYPE(type), context_die);
       // gen_type_die(TREE_TYPE(type), context_die);
@@ -902,7 +823,7 @@ DIType DebugInfo::getOrCreateType(tree type) {
     case RECORD_TYPE:
     case QUAL_UNION_TYPE:
     case UNION_TYPE: 
-      return createStructType(type);
+      Ty = createStructType(type);
       break;
 
     case INTEGER_TYPE:
@@ -912,7 +833,7 @@ DIType DebugInfo::getOrCreateType(tree type) {
       Ty = createBasicType(type);
       break;
   }
-  TypeCache[type] = WeakVH(Ty.getNode());
+  TypeCache[type] = Ty;
   return Ty;
 }
 
@@ -938,10 +859,9 @@ DICompileUnit DebugInfo::getOrCreateCompileUnit(const char *FullPath,
                                                 bool isMain) {
   if (!FullPath)
     FullPath = main_input_filename;
-  std::map<std::string, WeakVH >::iterator I = CUCache.find(FullPath);
-  if (I != CUCache.end())
-    if (Value *M = I->second)
-      return DICompileUnit(cast<MDNode>(M));
+  GlobalVariable *&CU = CUCache[FullPath];
+  if (CU)
+    return DICompileUnit(CU);
 
   // Get source file information.
   std::string Directory;
@@ -970,24 +890,24 @@ DICompileUnit DebugInfo::getOrCreateCompileUnit(const char *FullPath,
   else
     LangTag = DW_LANG_C89;
 
-  const char *Flags = "";
-  // Do this only when RC_DEBUG_OPTIONS environment variable is set to
-  // a nonempty string. This is intended only for internal Apple use.
-  char * debugopt = getenv("RC_DEBUG_OPTIONS");
-  if (debugopt && debugopt[0])
-    Flags = get_arguments();
-  
-  // flag_objc_abi represents Objective-C runtime version number. It is zero
-  // for all other language.
-  unsigned ObjcRunTimeVer = 0;
-  if (flag_objc_abi != 0 && flag_objc_abi != -1)
-    ObjcRunTimeVer = flag_objc_abi;
-  DICompileUnit NewCU = DebugFactory.CreateCompileUnit(LangTag, FileName, 
-						       Directory, 
-						       version_string, isMain,
-						       optimize, Flags,
-						       ObjcRunTimeVer);
-  CUCache[FullPath] = WeakVH(NewCU.getNode());
+   const char *Flags = "";
+   // Do this only when RC_DEBUG_OPTIONS environment variable is set to
+   // a nonempty string. This is intended only for internal Apple use.
+   char * debugopt = getenv("RC_DEBUG_OPTIONS");
+   if (debugopt && debugopt[0])
+     Flags = get_arguments();
+
+   // flag_objc_abi represents Objective-C runtime version number. It is zero
+   // for all other language.
+   unsigned ObjcRunTimeVer = 0;
+   if (flag_objc_abi != 0 && flag_objc_abi != -1)
+     ObjcRunTimeVer = flag_objc_abi;
+   DICompileUnit NewCU = DebugFactory.CreateCompileUnit(LangTag, FileName, 
+                                                        Directory, 
+                                                        version_string, isMain,
+                                                        optimize, Flags,
+                                                        ObjcRunTimeVer);
+  CU = NewCU.getGV();
   return NewCU;
 }
 

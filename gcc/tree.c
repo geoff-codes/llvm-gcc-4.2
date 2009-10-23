@@ -73,6 +73,13 @@ const char *const tree_code_class_strings[] =
 tree generic_block_literal_struct_type;
 /* APPLE LOCAL end 6353006  */
 
+/* LLVM LOCAL begin */
+/* The value of MAX_INLINE_INSNS_AUTO after all target-dependent changes
+   are applied to the global default (which many targets do), but before
+   command line flags are handled. */
+unsigned default_max_inline_insns_auto;
+/* LLVM LOCAL end */
+
 /* obstack.[ch] explicitly declined to prototype this.  */
 extern int _obstack_allocated_p (struct obstack *h, void *obj);
 
@@ -3347,8 +3354,6 @@ annotate_with_file_line (tree node, const char *file, int line)
      entry cache can reduce the number of allocations by more
      than half.  */
   if (last_annotated_node
-      /* LLVM LOCAL - Check for NULL file.  */
-      && file
       && last_annotated_node->line == line
       && (last_annotated_node->file == file
 	  || !strcmp (last_annotated_node->file, file)))
@@ -7976,36 +7981,5 @@ bool in_objc_property_decl_context (void) {
   return objc_property_decl_context;
 }
 /* APPLE LOCAL end weak_import on property 6676828 */
-
-/* LLVM LOCAL begin radar 6419781 */
-bool
-type_is_block_byref_struct (tree type)
-{
-  if (!type)
-    return false;
-
-  if (TREE_CODE (type) == POINTER_TYPE)
-    type = TREE_TYPE (type);
-
-  if (!type 
-      || ! TYPE_NAME (type)
-      || ! (TREE_CODE (type) == RECORD_TYPE))
-    return false;
-
-  if (TREE_CODE (TYPE_NAME (type)) == IDENTIFIER_NODE
-      && strncmp (IDENTIFIER_POINTER (TYPE_NAME (type)),
-                  "__Block_byref_", 14) == 0)
-    return true;
-  else if (TREE_CODE (TYPE_NAME (type)) == TYPE_DECL
-           && DECL_NAME (TYPE_NAME (type))
-           && IDENTIFIER_POINTER (DECL_NAME (TYPE_NAME (type)))
-           && (strncmp 
-               (IDENTIFIER_POINTER (DECL_NAME (TYPE_NAME (type))),
-                "__Block_byref_", 14) == 0))
-    return true;
-  else
-    return false;
-}
-/* LLVM LOCAL begin end 6419781 */
 
 #include "gt-tree.h"

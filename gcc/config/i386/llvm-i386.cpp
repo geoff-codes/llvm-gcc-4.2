@@ -62,7 +62,7 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
   case IX86_BUILTIN_PADDW128:
   case IX86_BUILTIN_PADDD128:
   case IX86_BUILTIN_PADDQ128:
-    Result = Builder.CreateAdd(Ops[0], Ops[1]);
+    Result = Builder.CreateAdd(Ops[0], Ops[1], "tmp");
     return true;
   case IX86_BUILTIN_SUBPS:
   case IX86_BUILTIN_SUBPD:
@@ -74,34 +74,34 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
   case IX86_BUILTIN_PSUBW128:
   case IX86_BUILTIN_PSUBD128:
   case IX86_BUILTIN_PSUBQ128:
-    Result = Builder.CreateSub(Ops[0], Ops[1]);
+    Result = Builder.CreateSub(Ops[0], Ops[1], "tmp");
     return true;
   case IX86_BUILTIN_MULPS:
   case IX86_BUILTIN_MULPD:
   case IX86_BUILTIN_PMULLW:
   case IX86_BUILTIN_PMULLW128:
-    Result = Builder.CreateMul(Ops[0], Ops[1]);
+    Result = Builder.CreateMul(Ops[0], Ops[1], "tmp");
     return true;
   case IX86_BUILTIN_DIVPS:
   case IX86_BUILTIN_DIVPD:
-    Result = Builder.CreateFDiv(Ops[0], Ops[1]);
+    Result = Builder.CreateFDiv(Ops[0], Ops[1], "tmp");
     return true;
   case IX86_BUILTIN_PAND:
   case IX86_BUILTIN_PAND128:
-    Result = Builder.CreateAnd(Ops[0], Ops[1]);
+    Result = Builder.CreateAnd(Ops[0], Ops[1], "tmp");
     return true;
   case IX86_BUILTIN_PANDN:
   case IX86_BUILTIN_PANDN128:
-    Ops[0] = Builder.CreateNot(Ops[0]);
-    Result = Builder.CreateAnd(Ops[0], Ops[1]);
+    Ops[0] = Builder.CreateNot(Ops[0], "tmp");
+    Result = Builder.CreateAnd(Ops[0], Ops[1], "tmp");
     return true;
   case IX86_BUILTIN_POR:
   case IX86_BUILTIN_POR128:
-    Result = Builder.CreateOr(Ops[0], Ops[1]);
+    Result = Builder.CreateOr(Ops[0], Ops[1], "tmp");
     return true;
   case IX86_BUILTIN_PXOR:
   case IX86_BUILTIN_PXOR128:
-    Result = Builder.CreateXor(Ops[0], Ops[1]);
+    Result = Builder.CreateXor(Ops[0], Ops[1], "tmp");
     return true;
   case IX86_BUILTIN_ANDPS:
   case IX86_BUILTIN_ORPS:
@@ -120,27 +120,27 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
                                  VectorType::get(Type::getInt64Ty(Context), 2),
                                      "tmp");
     
-    Ops[1] = Builder.CreateBitCast(Ops[1], Ops[0]->getType());
+    Ops[1] = Builder.CreateBitCast(Ops[1], Ops[0]->getType(), "tmp");
     switch (FnCode) {
       case IX86_BUILTIN_ANDPS:
       case IX86_BUILTIN_ANDPD:
-        Result = Builder.CreateAnd(Ops[0], Ops[1]);
+        Result = Builder.CreateAnd(Ops[0], Ops[1], "tmp");
         break;
       case IX86_BUILTIN_ORPS:
       case IX86_BUILTIN_ORPD:
-        Result = Builder.CreateOr (Ops[0], Ops[1]);
+        Result = Builder.CreateOr (Ops[0], Ops[1], "tmp");
          break;
       case IX86_BUILTIN_XORPS:
       case IX86_BUILTIN_XORPD:
-        Result = Builder.CreateXor(Ops[0], Ops[1]);
+        Result = Builder.CreateXor(Ops[0], Ops[1], "tmp");
         break;
       case IX86_BUILTIN_ANDNPS:
       case IX86_BUILTIN_ANDNPD:
-        Ops[0] = Builder.CreateNot(Ops[0]);
-        Result = Builder.CreateAnd(Ops[0], Ops[1]);
+        Ops[0] = Builder.CreateNot(Ops[0], "tmp");
+        Result = Builder.CreateAnd(Ops[0], Ops[1], "tmp");
         break;
     }
-    Result = Builder.CreateBitCast(Result, ResultType);
+    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
     return true;
   case IX86_BUILTIN_SHUFPS:
     if (ConstantInt *Elt = dyn_cast<ConstantInt>(Ops[2])) {
@@ -279,47 +279,47 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
     return true;
   }
   case IX86_BUILTIN_LOADQ: {
-    const PointerType *i64Ptr = Type::getInt64PtrTy(Context);
-    Ops[0] = Builder.CreateBitCast(Ops[0], i64Ptr);
-    Ops[0] = Builder.CreateLoad(Ops[0]);
+    PointerType *i64Ptr = PointerType::getUnqual(Type::getInt64Ty(Context));
+    Ops[0] = Builder.CreateBitCast(Ops[0], i64Ptr, "tmp");
+    Ops[0] = Builder.CreateLoad(Ops[0], "tmp");
     Value *Zero = ConstantInt::get(Type::getInt64Ty(Context), 0);
     Result = BuildVector(Zero, Zero, NULL);
     Value *Idx = ConstantInt::get(Type::getInt32Ty(Context), 0);
-    Result = Builder.CreateInsertElement(Result, Ops[0], Idx);
-    Result = Builder.CreateBitCast(Result, ResultType);
+    Result = Builder.CreateInsertElement(Result, Ops[0], Idx, "tmp");
+    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
     return true;
   }
   case IX86_BUILTIN_LOADUPS: {
     VectorType *v4f32 = VectorType::get(Type::getFloatTy(Context), 4);
-    const PointerType *v4f32Ptr = v4f32->getPointerTo();
-    Value *BC = Builder.CreateBitCast(Ops[0], v4f32Ptr);
-    LoadInst *LI = Builder.CreateLoad(BC);
+    PointerType *v4f32Ptr = PointerType::getUnqual(v4f32);
+    Value *BC = Builder.CreateBitCast(Ops[0], v4f32Ptr, "tmp");
+    LoadInst *LI = Builder.CreateLoad(BC, "tmp");
     LI->setAlignment(1);
     Result = LI;
     return true;
   }
   case IX86_BUILTIN_LOADUPD: {
     VectorType *v2f64 = VectorType::get(Type::getDoubleTy(Context), 2);
-    const PointerType *v2f64Ptr = v2f64->getPointerTo();
-    Value *BC = Builder.CreateBitCast(Ops[0], v2f64Ptr);
-    LoadInst *LI = Builder.CreateLoad(BC);
+    PointerType *v2f64Ptr = PointerType::getUnqual(v2f64);
+    Value *BC = Builder.CreateBitCast(Ops[0], v2f64Ptr, "tmp");
+    LoadInst *LI = Builder.CreateLoad(BC, "tmp");
     LI->setAlignment(1);
     Result = LI;
     return true;
   }
   case IX86_BUILTIN_LOADDQU: {
     VectorType *v16i8 = VectorType::get(Type::getInt8Ty(Context), 16);
-    const PointerType *v16i8Ptr = v16i8->getPointerTo();
-    Value *BC = Builder.CreateBitCast(Ops[0], v16i8Ptr);
-    LoadInst *LI = Builder.CreateLoad(BC);
+    PointerType *v16i8Ptr = PointerType::getUnqual(v16i8);
+    Value *BC = Builder.CreateBitCast(Ops[0], v16i8Ptr, "tmp");
+    LoadInst *LI = Builder.CreateLoad(BC, "tmp");
     LI->setAlignment(1);
     Result = LI;
     return true;
   }
   case IX86_BUILTIN_STOREUPS: {
     VectorType *v4f32 = VectorType::get(Type::getFloatTy(Context), 4);
-    const PointerType *v4f32Ptr = v4f32->getPointerTo();
-    Value *BC = Builder.CreateBitCast(Ops[0], v4f32Ptr);
+    PointerType *v4f32Ptr = PointerType::getUnqual(v4f32);
+    Value *BC = Builder.CreateBitCast(Ops[0], v4f32Ptr, "tmp");
     StoreInst *SI = Builder.CreateStore(Ops[1], BC);
     SI->setAlignment(1);
     Result = SI;
@@ -327,8 +327,8 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
   }
   case IX86_BUILTIN_STOREUPD: {
     VectorType *v2f64 = VectorType::get(Type::getDoubleTy(Context), 2);
-    const PointerType *v2f64Ptr = v2f64->getPointerTo();
-    Value *BC = Builder.CreateBitCast(Ops[0], v2f64Ptr);
+    PointerType *v2f64Ptr = PointerType::getUnqual(v2f64);
+    Value *BC = Builder.CreateBitCast(Ops[0], v2f64Ptr, "tmp");
     StoreInst *SI = Builder.CreateStore(Ops[1], BC);
     SI->setAlignment(1);
     Result = SI;
@@ -336,66 +336,66 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
   }
   case IX86_BUILTIN_STOREDQU: {
     VectorType *v16i8 = VectorType::get(Type::getInt8Ty(Context), 16);
-    const PointerType *v16i8Ptr = v16i8->getPointerTo();
-    Value *BC = Builder.CreateBitCast(Ops[0], v16i8Ptr);
+    PointerType *v16i8Ptr = PointerType::getUnqual(v16i8);
+    Value *BC = Builder.CreateBitCast(Ops[0], v16i8Ptr, "tmp");
     StoreInst *SI = Builder.CreateStore(Ops[1], BC);
     SI->setAlignment(1);
     Result = SI;
     return true;
   }
   case IX86_BUILTIN_LOADHPS: {
-    const PointerType *f64Ptr = Type::getDoublePtrTy(Context);
-    Ops[1] = Builder.CreateBitCast(Ops[1], f64Ptr);
-    Value *Load = Builder.CreateLoad(Ops[1]);
+    PointerType *f64Ptr = PointerType::getUnqual(Type::getDoubleTy(Context));
+    Ops[1] = Builder.CreateBitCast(Ops[1], f64Ptr, "tmp");
+    Value *Load = Builder.CreateLoad(Ops[1], "tmp");
     Ops[1] = BuildVector(Load, UndefValue::get(Type::getDoubleTy(Context)), NULL);
-    Ops[1] = Builder.CreateBitCast(Ops[1], ResultType);
+    Ops[1] = Builder.CreateBitCast(Ops[1], ResultType, "tmp");
     Result = BuildVectorShuffle(Ops[0], Ops[1], 0, 1, 4, 5);
-    Result = Builder.CreateBitCast(Result, ResultType);
+    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
     return true;
   }
   case IX86_BUILTIN_LOADLPS: {
-    const PointerType *f64Ptr = Type::getDoublePtrTy(Context);
-    Ops[1] = Builder.CreateBitCast(Ops[1], f64Ptr);
-    Value *Load = Builder.CreateLoad(Ops[1]);
+    PointerType *f64Ptr = PointerType::getUnqual(Type::getDoubleTy(Context));
+    Ops[1] = Builder.CreateBitCast(Ops[1], f64Ptr, "tmp");
+    Value *Load = Builder.CreateLoad(Ops[1], "tmp");
     Ops[1] = BuildVector(Load, UndefValue::get(Type::getDoubleTy(Context)), NULL);
-    Ops[1] = Builder.CreateBitCast(Ops[1], ResultType);
+    Ops[1] = Builder.CreateBitCast(Ops[1], ResultType, "tmp");
     Result = BuildVectorShuffle(Ops[0], Ops[1], 4, 5, 2, 3);
-    Result = Builder.CreateBitCast(Result, ResultType);
+    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
     return true;
   }
   case IX86_BUILTIN_LOADHPD: {
-    Value *Load = Builder.CreateLoad(Ops[1]);
+    Value *Load = Builder.CreateLoad(Ops[1], "tmp");
     Ops[1] = BuildVector(Load, UndefValue::get(Type::getDoubleTy(Context)), NULL);
-    Ops[1] = Builder.CreateBitCast(Ops[1], ResultType);
+    Ops[1] = Builder.CreateBitCast(Ops[1], ResultType, "tmp");
     Result = BuildVectorShuffle(Ops[0], Ops[1], 0, 2);
-    Result = Builder.CreateBitCast(Result, ResultType);
+    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
     return true;
   }
   case IX86_BUILTIN_LOADLPD: {
-    Value *Load = Builder.CreateLoad(Ops[1]);
+    Value *Load = Builder.CreateLoad(Ops[1], "tmp");
     Ops[1] = BuildVector(Load, UndefValue::get(Type::getDoubleTy(Context)), NULL);
-    Ops[1] = Builder.CreateBitCast(Ops[1], ResultType);
+    Ops[1] = Builder.CreateBitCast(Ops[1], ResultType, "tmp");
     Result = BuildVectorShuffle(Ops[0], Ops[1], 2, 1);
-    Result = Builder.CreateBitCast(Result, ResultType);
+    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
     return true;
   }
   case IX86_BUILTIN_STOREHPS: {
     VectorType *v2f64 = VectorType::get(Type::getDoubleTy(Context), 2);
-    const PointerType *f64Ptr = Type::getDoublePtrTy(Context);
-    Ops[0] = Builder.CreateBitCast(Ops[0], f64Ptr);
+    PointerType *f64Ptr = PointerType::getUnqual(Type::getDoubleTy(Context));
+    Ops[0] = Builder.CreateBitCast(Ops[0], f64Ptr, "tmp");
     Value *Idx = ConstantInt::get(Type::getInt32Ty(Context), 1);
-    Ops[1] = Builder.CreateBitCast(Ops[1], v2f64);
-    Ops[1] = Builder.CreateExtractElement(Ops[1], Idx);
+    Ops[1] = Builder.CreateBitCast(Ops[1], v2f64, "tmp");
+    Ops[1] = Builder.CreateExtractElement(Ops[1], Idx, "tmp");
     Result = Builder.CreateStore(Ops[1], Ops[0]);
     return true;
   }
   case IX86_BUILTIN_STORELPS: {
     VectorType *v2f64 = VectorType::get(Type::getDoubleTy(Context), 2);
-    const PointerType *f64Ptr = Type::getDoublePtrTy(Context);
-    Ops[0] = Builder.CreateBitCast(Ops[0], f64Ptr);
+    PointerType *f64Ptr = PointerType::getUnqual(Type::getDoubleTy(Context));
+    Ops[0] = Builder.CreateBitCast(Ops[0], f64Ptr, "tmp");
     Value *Idx = ConstantInt::get(Type::getInt32Ty(Context), 0);
-    Ops[1] = Builder.CreateBitCast(Ops[1], v2f64);
-    Ops[1] = Builder.CreateExtractElement(Ops[1], Idx);
+    Ops[1] = Builder.CreateBitCast(Ops[1], v2f64, "tmp");
+    Ops[1] = Builder.CreateExtractElement(Ops[1], Idx, "tmp");
     Result = Builder.CreateStore(Ops[1], Ops[0]);
     return true;
   }
@@ -411,13 +411,13 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
   case IX86_BUILTIN_VEC_INIT_V4HI:
     // Sometimes G++ promotes arguments to int.
     for (unsigned i = 0; i != 4; ++i)
-      Ops[i] = Builder.CreateIntCast(Ops[i], Type::getInt16Ty(Context), false);
+      Ops[i] = Builder.CreateIntCast(Ops[i], Type::getInt16Ty(Context), false, "tmp");
     Result = BuildVector(Ops[0], Ops[1], Ops[2], Ops[3], NULL);
     return true;
   case IX86_BUILTIN_VEC_INIT_V8QI:
     // Sometimes G++ promotes arguments to int.
     for (unsigned i = 0; i != 8; ++i)
-      Ops[i] = Builder.CreateIntCast(Ops[i], Type::getInt8Ty(Context), false);
+      Ops[i] = Builder.CreateIntCast(Ops[i], Type::getInt8Ty(Context), false, "tmp");
     Result = BuildVector(Ops[0], Ops[1], Ops[2], Ops[3],
                          Ops[4], Ops[5], Ops[6], Ops[7], NULL);
     return true;
@@ -429,24 +429,24 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
   case IX86_BUILTIN_VEC_EXT_V4SF:
   case IX86_BUILTIN_VEC_EXT_V8HI:
   case IX86_BUILTIN_VEC_EXT_V16QI:
-    Result = Builder.CreateExtractElement(Ops[0], Ops[1]);
+    Result = Builder.CreateExtractElement(Ops[0], Ops[1], "tmp");
     return true;
   case IX86_BUILTIN_VEC_SET_V16QI:
     // Sometimes G++ promotes arguments to int.
-    Ops[1] = Builder.CreateIntCast(Ops[1], Type::getInt8Ty(Context), false);
-    Result = Builder.CreateInsertElement(Ops[0], Ops[1], Ops[2]);
+    Ops[1] = Builder.CreateIntCast(Ops[1], Type::getInt8Ty(Context), false, "tmp");
+    Result = Builder.CreateInsertElement(Ops[0], Ops[1], Ops[2], "tmp");
     return true;
   case IX86_BUILTIN_VEC_SET_V4HI:
   case IX86_BUILTIN_VEC_SET_V8HI:
     // GCC sometimes doesn't produce the right element type.
-    Ops[1] = Builder.CreateIntCast(Ops[1], Type::getInt16Ty(Context), false);
-    Result = Builder.CreateInsertElement(Ops[0], Ops[1], Ops[2]);
+    Ops[1] = Builder.CreateIntCast(Ops[1], Type::getInt16Ty(Context), false, "tmp");
+    Result = Builder.CreateInsertElement(Ops[0], Ops[1], Ops[2], "tmp");
     return true;
   case IX86_BUILTIN_VEC_SET_V4SI:
-    Result = Builder.CreateInsertElement(Ops[0], Ops[1], Ops[2]);
+    Result = Builder.CreateInsertElement(Ops[0], Ops[1], Ops[2], "tmp");
     return true;
   case IX86_BUILTIN_VEC_SET_V2DI:
-    Result = Builder.CreateInsertElement(Ops[0], Ops[1], Ops[2]);
+    Result = Builder.CreateInsertElement(Ops[0], Ops[1], Ops[2], "tmp");
     return true;
   case IX86_BUILTIN_CMPEQPS:
   case IX86_BUILTIN_CMPLTPS:
@@ -484,8 +484,8 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
     Value *Arg1 = Ops[1];
     if (flip) std::swap(Arg0, Arg1);
     Value *CallOps[3] = { Arg0, Arg1, Pred };
-    Result = Builder.CreateCall(cmpps, CallOps, CallOps+3);
-    Result = Builder.CreateBitCast(Result, ResultType);
+    Result = Builder.CreateCall(cmpps, CallOps, CallOps+3, "tmp");
+    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
     return true;
   }
   case IX86_BUILTIN_CMPEQSS:
@@ -514,8 +514,8 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
     }
     Value *Pred = ConstantInt::get(Type::getInt8Ty(Context), PredCode);
     Value *CallOps[3] = { Ops[0], Ops[1], Pred };
-    Result = Builder.CreateCall(cmpss, CallOps, CallOps+3);
-    Result = Builder.CreateBitCast(Result, ResultType);
+    Result = Builder.CreateCall(cmpss, CallOps, CallOps+3, "tmp");
+    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
     return true;
   }
   case IX86_BUILTIN_CMPEQPD:
@@ -555,8 +555,8 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
     if (flip) std::swap(Arg0, Arg1);
 
     Value *CallOps[3] = { Arg0, Arg1, Pred };
-    Result = Builder.CreateCall(cmppd, CallOps, CallOps+3);
-    Result = Builder.CreateBitCast(Result, ResultType);
+    Result = Builder.CreateCall(cmppd, CallOps, CallOps+3, "tmp");
+    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
     return true;
   }
   case IX86_BUILTIN_CMPEQSD:
@@ -583,8 +583,8 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
     }
     Value *Pred = ConstantInt::get(Type::getInt8Ty(Context), PredCode);
     Value *CallOps[3] = { Ops[0], Ops[1], Pred };
-    Result = Builder.CreateCall(cmpsd, CallOps, CallOps+3);
-    Result = Builder.CreateBitCast(Result, ResultType);
+    Result = Builder.CreateCall(cmpsd, CallOps, CallOps+3, "tmp");
+    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
     return true;
   }
   case IX86_BUILTIN_LDMXCSR: {
@@ -592,7 +592,8 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
       Intrinsic::getDeclaration(TheModule, Intrinsic::x86_sse_ldmxcsr);
     Value *Ptr = CreateTemporary(Type::getInt32Ty(Context));
     Builder.CreateStore(Ops[0], Ptr);
-    Ptr = Builder.CreateBitCast(Ptr, Type::getInt8PtrTy(Context));
+    Ptr = Builder.CreateBitCast(Ptr,
+                             PointerType::getUnqual(Type::getInt8Ty(Context)), "tmp");
     Result = Builder.CreateCall(ldmxcsr, Ptr);
     return true;
   }
@@ -600,10 +601,11 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
     Function *stmxcsr =
       Intrinsic::getDeclaration(TheModule, Intrinsic::x86_sse_stmxcsr);
     Value *Ptr  = CreateTemporary(Type::getInt32Ty(Context));
-    Value *BPtr = Builder.CreateBitCast(Ptr, Type::getInt8PtrTy(Context));
+    Value *BPtr = Builder.CreateBitCast(Ptr,
+                             PointerType::getUnqual(Type::getInt8Ty(Context)), "tmp");
     Builder.CreateCall(stmxcsr, BPtr);
     
-    Result = Builder.CreateLoad(Ptr);
+    Result = Builder.CreateLoad(Ptr, "tmp");
     return true;
   }
   }
@@ -672,8 +674,8 @@ llvm_x86_32_should_pass_aggregate_in_mixed_regs(tree TreeType, const Type *Ty,
     // as loads and stores of it get only 10 bytes.
     if (EltTy == Type::getInt32Ty(Context) ||
         EltTy == Type::getInt64Ty(Context) || 
-        EltTy->isFloatTy() ||
-        EltTy->isDoubleTy() ||
+        EltTy == Type::getFloatTy(Context) ||
+        EltTy == Type::getDoubleTy(Context) ||
         isa<PointerType>(EltTy)) {
       Elts.push_back(EltTy);
       continue;
@@ -702,8 +704,8 @@ bool llvm_x86_should_pass_aggregate_as_fca(tree type, const Type *Ty) {
   // short in 32-bit.
   const Type *EltTy = STy->getElementType(0);
   return !((TARGET_64BIT && (EltTy->isInteger() ||
-                             EltTy->isFloatTy() ||
-                             EltTy->isDoubleTy())) ||
+                             EltTy == Type::getFloatTy(Context) ||
+                             EltTy == Type::getDoubleTy(Context))) ||
            EltTy == Type::getInt16Ty(Context) ||
            EltTy == Type::getInt8Ty(Context));
 }
@@ -746,7 +748,7 @@ static void count_num_registers_uses(std::vector<const Type*> &ScalarElts,
         ++NumXMMs;
     } else if (Ty->isInteger() || isa<PointerType>(Ty)) {
       ++NumGPRs;
-    } else if (Ty->isVoidTy()) {
+    } else if (Ty==Type::getVoidTy(Context)) {
       // Padding bytes that are not passed anywhere
       ;
     } else {
@@ -1304,6 +1306,7 @@ const Type *llvm_x86_aggr_type_for_struct_return(tree type) {
     return NULL;
 
   const StructType *STy = cast<StructType>(Ty);
+  unsigned NumElements = STy->getNumElements();
   std::vector<const Type *> ElementTypes;
 
   // Special handling for _Complex.
@@ -1403,7 +1406,7 @@ void llvm_x86_extract_multiple_return_value(Value *Src, Value *Dest,
     } 
 
     // Special treatement for _Complex.
-    if (isa<StructType>(DestElemType)) {
+    if (const StructType *ComplexType = dyn_cast<StructType>(DestElemType)) {
       llvm::Value *Idxs[3];
       Idxs[0] = ConstantInt::get(llvm::Type::getInt32Ty(Context), 0);
       Idxs[1] = ConstantInt::get(llvm::Type::getInt32Ty(Context), DNO);

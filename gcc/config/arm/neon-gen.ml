@@ -72,6 +72,19 @@ let close_braceblock nesting =
    amounts, etc.) can be checked for validity.  GCC can check them after
    inlining, but LLVM does inlining separately.
 
+   This is not ideal for error messages.  In the simple cases, llvm-gcc will
+   use the GCC builtin names instead of the user-visible ARM intrinsic names.
+   In cases where the macros use unions to convert argument types, the error
+   messages may not show any context information at all.
+
+   The problems with error messages could be avoided if the compiler
+   recognized the intrinsics directly, but that is not trivial.  The
+   user-visible intrinsics need to use the types defined by ARM that
+   distinguish the vector element signedness, whereas the LLVM intrinsics do
+   not care about signedness and also use different struct types (multiple
+   fields instead of arrays) that match the capabilities of tablegen-defined
+   intrinsics.
+
    Some macros translate to simple intrinsic calls and should not end with
    semicolons, but for others, which use GCC's statement-expressions to
    include unions that convert argument and/or return types, the semicolons
@@ -111,6 +124,12 @@ let print_function arity fnname body =
 
 let return_by_ptr features = List.mem ReturnPtr features
 
+let union_string num elts base =
+  let itype = inttype_for_array num elts in
+  let iname = string_of_inttype itype
+  and sname = string_of_vectype (T_arrayof (num, elts)) in
+  Printf.sprintf "union { %s __i; %s __o; } %s" sname iname base
+
 let rec signed_ctype = function
     T_uint8x8 | T_poly8x8 -> T_int8x8
   | T_uint8x16 | T_poly8x16 -> T_int8x16
@@ -134,35 +153,12 @@ let rec signed_ctype = function
   | T_const elt -> T_const (signed_ctype elt)
   | x -> x
 
-(* LLVM LOCAL begin union_string.
-   Array types are handled as structs in llvm-gcc, not as wide integers, and
-   single vector types have wrapper structs.  Unions are used here to convert
-   back and forth between these different representations.  The union_string
-   function has been updated accordingly, and it is moved below signed_ctype
-   so it can use that function.  *)
-let union_string num elts base =
-  let itype = match num with
-    1 -> elts
-  | _ -> T_arrayof (num, elts) in
-  let iname = string_of_vectype (signed_ctype itype)
-  and sname = string_of_vectype itype in
-  Printf.sprintf "union { %s __i; __neon_%s __o; } %s" sname iname base
-(* LLVM LOCAL end union_string.  *)
-
-(* LLVM LOCAL begin add_cast_with_prefix.  *)
-let add_cast_with_prefix ctype cval stype_prefix =
+let add_cast ctype cval =
   let stype = signed_ctype ctype in
   if ctype <> stype then
-    match stype with
-      T_ptrto elt ->
-        Printf.sprintf "__neon_ptr_cast(%s%s, %s)" stype_prefix (string_of_vectype stype) cval
-    | _ ->
-        Printf.sprintf "(%s%s) %s" stype_prefix (string_of_vectype stype) cval
+    Printf.sprintf "(%s) %s" (string_of_vectype stype) cval
   else
     cval
-
-let add_cast ctype cval = add_cast_with_prefix ctype cval ""
-(* LLVM LOCAL end add_cast_with_prefix.  *)
 
 let cast_for_return to_ty = "(" ^ (string_of_vectype to_ty) ^ ")"
 
@@ -182,21 +178,6 @@ let return arity return_by_ptr thing =
         else
           let uname = union_string num vec "__rv" in
           [uname], ["__rv.__o = " ^ thing; "__rv.__i"]
-    (* LLVM LOCAL begin Convert vector result to wrapper struct. *)
-    | T_int8x8    | T_int8x16
-    | T_int16x4   | T_int16x8
-    | T_int32x2   | T_int32x4
-    | T_int64x1   | T_int64x2
-    | T_uint8x8   | T_uint8x16
-    | T_uint16x4  | T_uint16x8
-    | T_uint32x2  | T_uint32x4
-    | T_uint64x1  | T_uint64x2
-    | T_float32x2 | T_float32x4
-    | T_poly8x8   | T_poly8x16
-    | T_poly16x4  | T_poly16x8 ->
-        let uname = union_string 1 ret "__rv" in
-        [uname], ["__rv.__o = " ^ thing; "__rv.__i"]
-    (* LLVM LOCAL end Convert vector result to wrapper struct. *)
     | T_void -> [], [thing]
     | _ ->
         [], [(cast_for_return ret) ^ thing]
@@ -217,29 +198,8 @@ let params return_by_ptr ps =
         let decl = Printf.sprintf "%s = { %s }" uname p in
         pdecls := decl :: !pdecls;
         p ^ "u.__o"
-    (* LLVM LOCAL begin Extract vector operand from wrapper struct. *)
-    | T_int8x8    | T_int8x16
-    | T_int16x4   | T_int16x8
-    | T_int32x2   | T_int32x4
-    | T_int64x1   | T_int64x2
-    | T_uint8x8   | T_uint8x16
-    | T_uint16x4  | T_uint16x8
-    | T_uint32x2  | T_uint32x4
-    | T_uint64x1  | T_uint64x2
-    | T_float32x2 | T_float32x4
-    | T_poly8x8   | T_poly8x16
-    | T_poly16x4  | T_poly16x8 ->
-        let decl = Printf.sprintf "%s %s = %s"
-          (string_of_vectype t) (p ^ "x") p in
-        pdecls := decl :: !pdecls;
-        add_cast_with_prefix t (p ^ "x.val") "__neon_"
-    | T_immediate (lo, hi) -> p
-    | _ ->
-        let decl = Printf.sprintf "%s %s = %s"
-          (string_of_vectype t) (p ^ "x") p in
-        pdecls := decl :: !pdecls;
-        add_cast t (p ^ "x") in
-    (* LLVM LOCAL end Extract vector operand from wrapper struct. *)
+    (* LLVM LOCAL Omit casts so so we get better error messages.  *)
+    | _ -> (* add_cast t *) p in
   let plist = match ps with
     Arity0 _ -> []
   | Arity1 (_, t1) -> [ptype t1 "__a"]
@@ -385,34 +345,16 @@ let deftypes () =
     (fun (cbase, abase, esize, enum) ->
       let attr =
         match enum with
-        (* LLVM LOCAL no special case for enum == 1 so int64x1_t is a vector *)
-          _ -> Printf.sprintf "\t__attribute__ ((__vector_size__ (%d)))"
+          1 -> ""
+        | _ -> Printf.sprintf "\t__attribute__ ((__vector_size__ (%d)))"
                               (esize * enum / 8) in
-      (* LLVM LOCAL Add "__neon_" prefix. *)
-      Format.printf "typedef %s __neon_%s%dx%d_t%s;@\n" cbase abase esize enum attr)
+      Format.printf "typedef %s %s%dx%d_t%s;@\n" cbase abase esize enum attr)
     typeinfo;
   Format.print_newline ();
   (* Extra types not in <stdint.h>.  *)
   Format.printf "typedef __builtin_neon_sf float32_t;\n";
   Format.printf "typedef __builtin_neon_poly8 poly8_t;\n";
   Format.printf "typedef __builtin_neon_poly16 poly16_t;\n"
-(* LLVM LOCAL begin Define containerized vector types. *)
-  ;
-  List.iter
-    (fun (cbase, abase, esize, enum) ->
-      let typename =
-        Printf.sprintf "%s%dx%d_t" abase esize enum in
-      let structname =
-        Printf.sprintf "__simd%d_%s%d_t" (esize * enum) abase esize in
-      let sfmt = start_function () in
-      Format.printf "typedef struct %s" structname;
-      open_braceblock sfmt;
-      Format.printf "__neon_%s val;" typename;
-      close_braceblock sfmt;
-      Format.printf " %s;" typename;
-      end_function sfmt)
-    typeinfo
-(* LLVM LOCAL end Define containerized vector types. *)
 
 (* Output structs containing arrays, for load & store instructions etc.  *)
 
@@ -492,11 +434,6 @@ let _ =
 "";
 "#ifdef __cplusplus";
 "extern \"C\" {";
-(* LLVM LOCAL begin Use reinterpret_cast for pointers in C++ *)
-"#define __neon_ptr_cast(ty, ptr) reinterpret_cast<ty>(ptr)";
-"#else";
-"#define __neon_ptr_cast(ty, ptr) (ty)(ptr)";
-(* LLVM LOCAL end Use reinterpret_cast for pointers in C++ *)
 "#endif";
 "";
 "#include <stdint.h>";

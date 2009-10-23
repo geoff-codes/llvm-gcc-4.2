@@ -195,8 +195,7 @@ in the following sections.
 -faltivec (APPLE ONLY) @gol
 @c APPLE LOCAL CW asm blocks
 -fasm-blocks (APPLE ONLY) @gol
-@c APPLE LOCAL blocks 7205047 5811887
--fno-asm -fno-blocks -fno-builtin  -fno-builtin-@var{function} @gol
+-fno-asm  -fno-builtin  -fno-builtin-@var{function} @gol
 -fhosted  -ffreestanding -fopenmp -fms-extensions @gol
 -trigraphs  -no-integrated-cpp  -traditional  -traditional-cpp @gol
 @c APPLE LOCAL 5612787 sse4
@@ -1455,16 +1454,6 @@ use the @option{-fno-gnu-keywords} flag instead, which has the same
 effect.  In C99 mode (@option{-std=c99} or @option{-std=gnu99}), this
 switch only affects the @code{asm} and @code{typeof} keywords, since
 @code{inline} is a standard keyword in ISO C99.
-
-@c APPLE LOCAL begin blocks 7205047 5811887
-@item -fno-blocks
-@opindex fno-blocks
-Disable the use of blocks.  In @option{-std=c99} mode, blocks are
-turned off by default.  @option{-fblocks} can be used to re-enable the
-feature, if off.  Runtime support for blocks first appeared in Mac OS
-X 10.6.  When targeting 10.6 (see @option{-mmacosx-version-min}) and
-later, the extension is on by default.
-@c APPLE LOCAL end blocks 7205047 5811887
 
 @item -fno-builtin
 @itemx -fno-builtin-@var{function}
@@ -5413,12 +5402,6 @@ parameters controlling inlining.
 abstract measurement of function's size.  In no way does it represent a count
 of assembly instructions and as such its exact meaning might change from one
 release to an another.
-@c LLVM LOCAL begin
-This option has no effect in llvm-gcc.  The always_inline and noinline
-parameters are honored, but none of the other inlining parameters have any
-effect; there is no specific user control on the amount of inlining done.  The
-compiler will do less inlining at -O2 or -Os than at -O3.
-@c LLVM LOCAL end
 
 @item -fkeep-inline-functions
 @opindex fkeep-inline-functions

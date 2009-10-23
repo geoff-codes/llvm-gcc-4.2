@@ -258,17 +258,11 @@ extern GTY(()) rtx aof_pic_label;
    tested when we know we are generating for VFP hardware; we need to
    be more careful with TARGET_NEON as noted below.  */
 
-/* LLVM LOCAL begin */
-/* FPU is has the full VFPv3/NEON register file of 32 D registers.  */
-#define TARGET_VFP3_REGSET (arm_fp_model == ARM_FP_MODEL_VFP \
-			    && (arm_fpu_arch == FPUTYPE_VFP3 \
-				|| arm_fpu_arch == FPUTYPE_NEON))
-
-/* FPU supports VFPv3 instructions.  */
+/* FPU is VFPv3 (with twice the number of D registers).  Setting the FPU to
+   Neon automatically enables VFPv3 too.  */
 #define TARGET_VFP3 (arm_fp_model == ARM_FP_MODEL_VFP \
-		     && (arm_fpu_arch == FPUTYPE_VFP3))
-/* LLVM LOCAL end */
-
+		     && (arm_fpu_arch == FPUTYPE_VFP3 \
+			 || arm_fpu_arch == FPUTYPE_NEON))
 /* FPU supports Neon instructions.  The setting of this macro gets
    revealed via __ARM_NEON__ so we add extra guards upon TARGET_32BIT
    and TARGET_HARD_FLOAT to ensure that NEON instructions are
@@ -430,11 +424,6 @@ extern int arm_arch6;
 
 /* LLVM LOCAL Declare arm_arch7a for use when setting the target triple.  */
 extern int arm_arch7a;
-
-/* APPLE LOCAL begin 6258536 Atomic builtins */
-/* Nonzero if this chip supports the ARM Architecture 7a extensions.  */
-extern int arm_arch7a;
-/* APPLE LOCAL end 6258536 Atomic builtins */
 
 /* APPLE LOCAL begin v7 support. Merge from mainline */
 /* Nonzero if instructions not present in the 'M' profile can be used.  */
@@ -1036,10 +1025,8 @@ extern int arm_structure_size_boundary;
 #define FIRST_VFP_REGNUM	63
 /* APPLE LOCAL begin v7 support. Merge from mainline */
 #define D7_VFP_REGNUM		78  /* Registers 77 and 78 == VFP reg D7.  */
-/* LLVM LOCAL begin */
-#define LAST_VFP_REGNUM							\
-  (TARGET_VFP3_REGSET ? LAST_HI_VFP_REGNUM : LAST_LO_VFP_REGNUM)
-/* LLVM LOCAL end */
+#define LAST_VFP_REGNUM	\
+  (TARGET_VFP3 ? LAST_HI_VFP_REGNUM : LAST_LO_VFP_REGNUM)
 
 #define IS_VFP_REGNUM(REGNUM) \
   (((REGNUM) >= FIRST_VFP_REGNUM) && ((REGNUM) <= LAST_VFP_REGNUM))
@@ -1151,11 +1138,9 @@ extern int valid_iwmmxt_reg_mode (int);
 
 /* APPLE LOCAL begin v7 support. Merge from Codesourcery */
 /* Modes valid for Neon D registers.  */
-/* LLVM LOCAL begin */
 #define VALID_NEON_DREG_MODE(MODE) \
   ((MODE) == V2SImode || (MODE) == V4HImode || (MODE) == V8QImode \
-   || (MODE) == V2SFmode || (MODE) == V1DImode)
-/* LLVM LOCAL end */
+   || (MODE) == V2SFmode || (MODE) == DImode)
 
 /* Modes valid for Neon Q registers.  */
 #define VALID_NEON_QREG_MODE(MODE) \
@@ -2746,10 +2731,7 @@ extern int making_const_table;
           if (is_called_in_ARM_mode (DECL)		\
 	      || (TARGET_THUMB1 && !TARGET_THUMB1_ONLY	\
 		  && current_function_is_thunk))	\
-            {						\
-              fprintf (STREAM, "\t.align 2\n") ;	\
-              fprintf (STREAM, "\t.code 32\n") ;	\
-            }						\
+            fprintf (STREAM, "\t.code 32\n") ;		\
           else						\
 /* APPLE LOCAL begin ARM thumb_func <symbol_name> */	\
 	    {						\
@@ -2844,8 +2826,7 @@ extern int making_const_table;
     int is_minus = GET_CODE (X) == MINUS;				\
 									\
     if (GET_CODE (X) == REG)						\
-      /* APPLE LOCAL 6258536 Atomic builtins */				\
-      asm_fprintf (STREAM, "[%r]", REGNO (X));				\
+      asm_fprintf (STREAM, "[%r, #0]", REGNO (X));			\
     else if (GET_CODE (X) == PLUS || is_minus)				\
       {									\
 	rtx base = XEXP (X, 0);						\
@@ -3384,9 +3365,7 @@ enum neon_builtins
   NEON_BUILTIN_vreinterpretv4hi,
   NEON_BUILTIN_vreinterpretv2si,
   NEON_BUILTIN_vreinterpretv2sf,
-  /* LLVM LOCAL begin */
-  NEON_BUILTIN_vreinterpretv1di,
-  /* LLVM LOCAL end */
+  NEON_BUILTIN_vreinterpretdi,
   NEON_BUILTIN_vreinterpretv16qi,
   NEON_BUILTIN_vreinterpretv8hi,
   NEON_BUILTIN_vreinterpretv4si,
@@ -3480,14 +3459,8 @@ enum neon_builtins
       F.setCPU("arm7tdmi"); \
       break; \
     } \
-    if (TARGET_VFP3)						\
-      F.AddFeature("vfp3");					\
-    else							\
-      F.AddFeature("vfp3", false);				\
-    if (TARGET_NEON)						\
-      F.AddFeature("neon");					\
-    else							\
-      F.AddFeature("neon", false);				\
+    if (TARGET_NEON) \
+      F.AddFeature("neon"); \
   }
 
 /* Encode arm / thumb modes and arm subversion number in the triplet. e.g.

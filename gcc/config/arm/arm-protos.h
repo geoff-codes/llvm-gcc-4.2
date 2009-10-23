@@ -71,8 +71,6 @@ extern bool const64_ok_for_arm_add (rtx);
 /* APPLE LOCAL end 5831562 long long constants */
 extern int arm_split_constant (RTX_CODE, enum machine_mode, rtx,
 			       HOST_WIDE_INT, rtx, rtx, int);
-/* APPLE LOCAL 6258536 atomic builtins */
-extern void arm_split_compare_and_swap(rtx, rtx, rtx, rtx, rtx);
 extern RTX_CODE arm_canonicalize_comparison (RTX_CODE, enum machine_mode,
 					     rtx *);
 extern int legitimate_pic_operand_p (rtx);
@@ -258,8 +256,10 @@ extern void arm_pr_long_calls_off (struct cpp_reader *);
 /* APPLE LOCAL 5946347 ms_struct support */
 extern int arm_field_ms_struct_align (tree);
 
-/* LLVM LOCAL pr5037 removed arm_mangle_type */
+/* APPLE LOCAL begin v7 support. Merge from Codesourcery */
+extern const char *arm_mangle_type (tree);
 
+/* APPLE LOCAL end v7 support. Merge from Codesourcery */
 /* APPLE LOCAL v7 support. Fix compact switch tables */
 extern void arm_asm_output_addr_diff_vec (FILE *file, rtx LABEL, rtx BODY);
 

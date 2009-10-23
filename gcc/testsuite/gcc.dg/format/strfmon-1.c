@@ -56,8 +56,7 @@ foo (char *s, size_t m, double d, long double ld)
   /* Miscellaneous bogus formats.  */
   strfmon (s, m, "%n%n", d); /* { dg-warning "arguments" "too few args" } */
   strfmon (s, m, ""); /* { dg-warning "zero-length" "empty" } */
-  /* APPLE LOCAL 6821124 string arg is not non-null */
-  /* removed line */
+  strfmon (s, m, NULL); /* { dg-warning "null" "null format string" } */
   strfmon (s, m, "%"); /* { dg-warning "trailing" "tailing %" } */
   strfmon (s, m, "%n\0", d); /* { dg-warning "embedded" "embedded NUL" } */
   strfmon (s, m, "%^^n", d); /* { dg-warning "repeated" "repeated flag" } */
