@@ -62,8 +62,7 @@ private:
   const char *PrevFullPath;             // Previous location file encountered.
   int PrevLineNo;                       // Previous location line# encountered.
   BasicBlock *PrevBB;                   // Last basic block encountered.
-  DICompileUnit TheCU;                  // The compile unit.
-
+  
   // Current GCC lexical block (or enclosing FUNCTION_DECL).
   tree_node *CurrentGCCLexicalBlock;	
   
@@ -72,6 +71,7 @@ private:
   // debug info (through MDNodes) is not shared accidently.
   unsigned FwdTypeCount;
 
+  std::map<std::string, WeakVH > CUCache;
   std::map<tree_node *, WeakVH > TypeCache;
                                         // Cache of previously constructed 
                                         // Types.
@@ -167,9 +167,6 @@ private:
   /// getOrCreateCompileUnit - Create a new compile unit.
   DICompileUnit getOrCreateCompileUnit(const char *FullPath,
                                        bool isMain = false);
-
-  /// getOrCreateFile - Get DIFile descriptor.
-  DIFile getOrCreateFile(const char *FullPath);
 
   /// findRegion - Find tree_node N's region.
   DIDescriptor findRegion(tree_node *n);

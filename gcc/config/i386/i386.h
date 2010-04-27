@@ -3923,12 +3923,11 @@ enum ix86_builtins
                                     DESTTY, OPS)                              \
         TargetIntrinsicLower(EXP, BUILTIN_CODE, DESTLOC, RESULT, DESTTY, OPS);
 
-/* LLVM_GET_REG_NAME - When extracting a register name for a constraint, use
-   the string extracted from the magic symbol built for that register, rather
-   than reg_names.  The latter maps both AH and AL to the same thing, which
-   means we can't distinguish them. */
-#define LLVM_GET_REG_NAME(REG_NAME, REG_NUM) \
-  ((REG_NAME) + (*(REG_NAME) == '%' ? 1 : 0))
+/* When extracting a register name for a constraint, use the string extracted
+   from the magic symbol built for that register, rather than reg_names.
+   The latter maps both AH and AL to the same thing, which means we can't
+   distinguish them. */
+#define LLVM_DO_NOT_USE_REG_NAMES
 
 /* Propagate code model setting to backend */
 #define LLVM_SET_MACHINE_OPTIONS(argvec)	   \
@@ -3950,9 +3949,7 @@ enum ix86_builtins
   case CM_32:					   \
     argvec.push_back("--code-model=default");	   \
     break;					   \
-  }                                                \
-  if (TARGET_OMIT_LEAF_FRAME_POINTER)              \
-    argvec.push_back("--disable-non-leaf-fp-elim");
+  }
 
 #endif /* ENABLE_LLVM */
 /* LLVM LOCAL end */

@@ -100,13 +100,6 @@ extern char arm_arch_name[];
 	if (TARGET_NEON)				\
 	  builtin_define ("__ARM_NEON__");		\
 /* APPLE LOCAL end v7 support. Merge from Codesourcery */   \
-	/* LLVM LOCAL begin HF */			\
-	if (TARGET_FP16)				\
-	  {						\
-	    builtin_define ("__ARM_FP16");		\
-	    builtin_define ("__ARM_FP16__");		\
-	  }						\
-	/* LLVM LOCAL end HF */				\
 	/* Add a define for interworking.		\
 	   Needed when building libgcc.a.  */		\
 	if (arm_cpp_interwork)				\
@@ -223,11 +216,9 @@ extern GTY(()) rtx aof_pic_label;
 #define TARGET_HARD_FLOAT		(arm_float_abi != ARM_FLOAT_ABI_SOFT)
 /* Use hardware floating point calling convention.  */
 #define TARGET_HARD_FLOAT_ABI		(arm_float_abi == ARM_FLOAT_ABI_HARD)
-/* LLVM LOCAL begin */
-#define TARGET_FPA			(arm_fpu_desc->model == ARM_FP_MODEL_FPA)
-#define TARGET_MAVERICK			(arm_fpu_desc->model == ARM_FP_MODEL_MAVERICK)
-#define TARGET_VFP			(arm_fpu_desc->model == ARM_FP_MODEL_VFP)
-/* LLVM LOCAL end */
+#define TARGET_FPA			(arm_fp_model == ARM_FP_MODEL_FPA)
+#define TARGET_MAVERICK			(arm_fp_model == ARM_FP_MODEL_MAVERICK)
+#define TARGET_VFP			(arm_fp_model == ARM_FP_MODEL_VFP)
 /* APPLE LOCAL begin v7 support. Merge from mainline */
 #define TARGET_IWMMXT			(arm_arch_iwmmxt)
 #define TARGET_REALLY_IWMMXT		(TARGET_IWMMXT && TARGET_32BIT)
@@ -269,27 +260,22 @@ extern GTY(()) rtx aof_pic_label;
 
 /* LLVM LOCAL begin */
 /* FPU is has the full VFPv3/NEON register file of 32 D registers.  */
-#define TARGET_VFP3_REGSET (arm_fpu_desc->model == ARM_FP_MODEL_VFP \
-			    && (arm_fpu_desc->fpu == FPUTYPE_VFP3 \
-				|| arm_fpu_desc->fpu == FPUTYPE_NEON))
+#define TARGET_VFP3_REGSET (arm_fp_model == ARM_FP_MODEL_VFP \
+			    && (arm_fpu_arch == FPUTYPE_VFP3 \
+				|| arm_fpu_arch == FPUTYPE_NEON))
 
 /* FPU supports VFPv3 instructions.  */
-#define TARGET_VFP3 (arm_fpu_desc->model == ARM_FP_MODEL_VFP \
-		     && (arm_fpu_desc->fpu == FPUTYPE_VFP3))
+#define TARGET_VFP3 (arm_fp_model == ARM_FP_MODEL_VFP \
+		     && (arm_fpu_arch == FPUTYPE_VFP3))
 /* LLVM LOCAL end */
 
 /* FPU supports Neon instructions.  The setting of this macro gets
    revealed via __ARM_NEON__ so we add extra guards upon TARGET_32BIT
    and TARGET_HARD_FLOAT to ensure that NEON instructions are
    available.  */
-/* LLVM LOCAL begin */
 #define TARGET_NEON (TARGET_32BIT && TARGET_HARD_FLOAT \
-                     && arm_fpu_desc->model == ARM_FP_MODEL_VFP \
-		     && arm_fpu_desc->fpu == FPUTYPE_NEON)
-
-#define TARGET_FP16 (TARGET_VFP && arm_fpu_desc->fp16)
-
-/* LLVM LOCAL end */
+                     && arm_fp_model == ARM_FP_MODEL_VFP \
+		     && arm_fpu_arch == FPUTYPE_NEON)
 /* APPLE LOCAL end v7 support. Merge from Codesourcery */
 /* APPLE LOCAL begin v7 support. Merge from mainline */
 
@@ -351,7 +337,7 @@ enum arm_fp_model
   ARM_FP_MODEL_VFP
 };
 
-/* LLVM LOCAL remove arm_fp_model decl */
+extern enum arm_fp_model arm_fp_model;
 
 /* Which floating point hardware is available.  Also update
    fp_model_for_fpu in arm.c when adding entries to this list.  */
@@ -377,21 +363,14 @@ enum fputype
 /* APPLE LOCAL end v7 support. Merge from Codesourcery */
 };
 
-extern int arm_fpu_attr;
+/* Recast the floating point class to be the floating point attribute.  */
+#define arm_fpu_attr ((enum attr_fpu) arm_fpu_tune)
 
-/* LLVM LOCAL begin */
-struct fpu_desc
-{
-  const char * name;
-  enum fputype fpu;
-  /* LLVM LOCAL begin */
-  enum arm_fp_model model;
-  int fp16;
-  /* LLVM LOCAL end */
-};
+/* What type of floating point to tune for */
+extern enum fputype arm_fpu_tune;
 
-extern const struct fpu_desc * arm_fpu_desc;
-/* LLVM LOCAL end */
+/* What type of floating point instructions are available */
+extern enum fputype arm_fpu_arch;
 
 enum float_abi_type
 {
@@ -3509,10 +3488,6 @@ enum neon_builtins
       F.AddFeature("neon");					\
     else							\
       F.AddFeature("neon", false);				\
-    if (TARGET_FP16)						\
-      F.AddFeature("fp16");					\
-    else							\
-      F.AddFeature("fp16", false);				\
   }
 
 /* Encode arm / thumb modes and arm subversion number in the triplet. e.g.
@@ -3552,9 +3527,7 @@ enum neon_builtins
   if (TARGET_SOFT_FLOAT)                               \
     argvec.push_back("-soft-float");                   \
   if (TARGET_HARD_FLOAT_ABI)                           \
-    argvec.push_back("-float-abi=hard");               \
-  if (flag_mkernel || flag_apple_kext) \
-    argvec.push_back("-arm-long-calls");
+    argvec.push_back("-float-abi=hard");
 
 /* Doing struct copy by partial-word loads and stores is not a good idea on ARM. */
 #define TARGET_LLVM_MIN_BYTES_COPY_BY_MEMCPY 4
@@ -3574,16 +3547,6 @@ enum neon_builtins
 #define LLVM_TARGET_INTRINSIC_LOWER(EXP, BUILTIN_CODE, DESTLOC, RESULT,       \
                                     DESTTY, OPS)                              \
         TargetIntrinsicLower(EXP, BUILTIN_CODE, DESTLOC, RESULT, DESTTY, OPS);
-
-/* LLVM_GET_REG_NAME - The registers known to llvm as "r10", "r11", and "r12"
-   may have different names in GCC.  Register "r12" is called "ip", and on
-   non-Darwin OSs, "r10" is "sl" and "r11" is "fp".  Translate those names,
-   and use the default register names for everything else.  */
-#define LLVM_GET_REG_NAME(REG_NAME, REG_NUM) \
-  ((REG_NUM) == 10 ? "r10" \
-   : (REG_NUM) == 11 ? "r11" \
-   : (REG_NUM) == 12 ? "r12" \
-   : reg_names[REG_NUM])
 
 #endif /* ENABLE_LLVM */
 /* LLVM LOCAL end */

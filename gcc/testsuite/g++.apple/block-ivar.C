@@ -5,9 +5,7 @@
 
 #import <Foundation/Foundation.h>
 
-/* LLVM LOCAL - begin */
-/* Remove forward decl of Block_copy */
-/* LLVM LOCAL - end */
+extern "C" void *Block_copy(const void *aBlock);
 
 @interface TestObject : NSObject {
 @public

@@ -770,12 +770,6 @@ struct gcc_target
      is not permitted on TYPE1 and TYPE2, NULL otherwise.  */
   const char *(*invalid_binary_op) (int op, tree type1, tree type2);
 
-  /* LLVM LOCAL begin */
-  /* Returns whether the type should be promoted to some other type (e.g. HF ->
-     SF conversion on ARM) */
-  tree (*type_promotes_to) (tree ty);
-  /* LLVM LOCAL end */
-
   /* Return the class for a secondary reload, and fill in extra information.  */
   enum reg_class (*secondary_reload) (bool, rtx, enum reg_class,
 				      enum machine_mode,

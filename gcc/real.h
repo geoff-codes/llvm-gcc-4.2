@@ -263,9 +263,6 @@ extern const struct real_format ibm_extended_format;
 extern const struct real_format mips_extended_format;
 extern const struct real_format ieee_quad_format;
 extern const struct real_format mips_quad_format;
-/* LLVM LOCAL begin */
-extern const struct real_format ieee_half_format;
-/* LLVM LOCAL end */
 extern const struct real_format vax_f_format;
 extern const struct real_format vax_d_format;
 extern const struct real_format vax_g_format;
@@ -312,12 +309,6 @@ extern const struct real_format decimal_quad_format;
 /* IN is a REAL_VALUE_TYPE.  OUT is a long.  */
 #define REAL_VALUE_TO_TARGET_SINGLE(IN, OUT) \
   ((OUT) = real_to_target (NULL, &(IN), mode_for_size (32, MODE_FLOAT, 0)))
-
-/* LLVM LOCAL begin */
-/* IN is a REAL_VALUE_TYPE.  OUT is a long.  */
-#define REAL_VALUE_TO_TARGET_HALF(IN, OUT) \
-  ((OUT) = real_to_target (NULL, &(IN), mode_for_size (16, MODE_FLOAT, 0)))
-/* LLVM LOCAL end */
 
 #define REAL_VALUE_FROM_INT(r, lo, hi, mode) \
   real_from_integer (&(r), mode, lo, hi, 0)

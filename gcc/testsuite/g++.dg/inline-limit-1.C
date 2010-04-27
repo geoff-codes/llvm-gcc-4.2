@@ -1,7 +1,6 @@
 /* APPLE LOCAL file 4209014 4210936 */
 /* { dg-do compile } */
-/* LLVM LOCAL -m32 */
-/* { dg-options "-Os -m32" } */
+/* { dg-options "-Os" } */
 /* Call to inlinex1 should be inlined.  */
 /* { dg-final { scan-assembler-not "(\tcall|\tbl)\[ 	a-zA-Z0-9_\]*inlinex1" } } */
 /* Call to calleex1 should be called, not inlined.  */

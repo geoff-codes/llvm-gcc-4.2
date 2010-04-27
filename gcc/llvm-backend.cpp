@@ -409,12 +409,6 @@ void llvm_initialize_backend(void) {
     Args.push_back("--unwind-tables");
   if (!flag_schedule_insns)
     Args.push_back("--pre-RA-sched=source");
-  if (flag_function_sections)
-    Args.push_back("--ffunction-sections");
-  if (flag_data_sections)
-    Args.push_back("--fdata-sections");
-  if (flag_disable_debug_info_print)
-    Args.push_back("--disable-debug-info-print");
 
   // If there are options that should be passed through to the LLVM backend
   // directly from the command line, do so now.  This is mainly for debugging
@@ -980,13 +974,7 @@ void llvm_asm_file_end(void) {
 
 // llvm_call_llvm_shutdown - Release LLVM global state.
 void llvm_call_llvm_shutdown(void) {
-#ifndef NDEBUG
-  delete PerModulePasses;
-  delete PerFunctionPasses;
-  delete CodeGenPasses;
-  delete TheModule;
   llvm_shutdown();
-#endif
 }
 
 /// llvm_emit_code_for_current_function - Top level interface for emitting a

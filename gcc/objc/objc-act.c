@@ -924,28 +924,6 @@ lookup_protocol_in_reflist (tree rproto_list, tree lproto)
   return 0;
 }
 
-/* APPLE LOCAL begin radar 7865106 */
-static bool objc_class_weak_import(tree class)
-{
-  tree chain;
-  gcc_assert (class && TREE_CODE (class) == CLASS_INTERFACE_TYPE);
-  for (chain = CLASS_ATTRIBUTES (class); chain; chain = TREE_CHAIN (chain))
-    if (is_attribute_p ("weak_import", TREE_PURPOSE (chain)))
-      return true;
-  return false;
-}
-
-static char*
-objc_build_weak_reference_internal_classname (tree ident, bool metaclass)
-{
-  static char string[BUFSIZE];
-  sprintf (string, ".weak_reference %s_%s", !metaclass ? "_OBJC_CLASS_$" 
-				       : "_OBJC_METACLASS_$", 
-			    IDENTIFIER_POINTER (ident));
-  return string;
-}
-/* APPLE LOCAL end radar 7865106 */
-
 void
 /* APPLE LOCAL radar 4548636 */
 objc_start_class_interface (tree class, tree super_class, tree protos, tree attributes)
@@ -957,17 +935,6 @@ objc_start_class_interface (tree class, tree super_class, tree protos, tree attr
   CLASS_ATTRIBUTES (objc_interface_context) = attributes;
   objc_warn_on_class_attributes (objc_interface_context, false);
 /* APPLE LOCAL end radar 4548636 */
-  /* APPLE LOCAL begin radar 7865106 */
-  if (flag_objc_abi == 2 && objc_class_weak_import(objc_interface_context)) {
-    const char * name = 
-      objc_build_weak_reference_internal_classname(CLASS_NAME(objc_interface_context) , 0);
-    tree asm_str = build_string(strlen(name), name);
-    cgraph_add_asm_node(asm_str);
-    name = objc_build_weak_reference_internal_classname(CLASS_NAME(objc_interface_context) , 1);
-    asm_str = build_string(strlen(name), name);
-    cgraph_add_asm_node(asm_str);
-  }
-  /* APPLE LOCAL end radar 7865106 */
   objc_public_flag = 0;
 }
 
@@ -2016,22 +1983,7 @@ objc_build_compound_setter_call (tree receiver, tree prop_ident, tree rhs)
       bind = build3 (BIND_EXPR, void_type_node, temp, NULL, NULL);
       TREE_SIDE_EFFECTS (bind) = 1;
       add_stmt (bind);
-      /* APPLE LOCAL begin radar 7591784 */
-#ifdef OBJCPLUS
-      {
-	tree type = TREE_TYPE (rhs);
-	if (TYPE_NEEDS_CONSTRUCTING (type))
-          {
-	    comma_exp = temp;
-	    error("setting a C++ non-POD object value is not implemented - assign the value to a temporary and use the temporary.");
-	  }
-	else
-      	  comma_exp = build_modify_expr (temp, NOP_EXPR, rhs);
-      }
-#else
       comma_exp = build_modify_expr (temp, NOP_EXPR, rhs);
-#endif
-      /* APPLE LOCAL end radar 7591784 */
       comma_exp = build_compound_expr (comma_exp,
 		    objc_setter_func_call (receiver, prop_ident, temp));
       /* APPLE LOCAL begin radar 6264448 */
@@ -15208,10 +15160,6 @@ objc_warn_on_class_attributes (tree class, bool use)
       else if (is_attribute_p ("objc_exception", TREE_PURPOSE (chain)))
         ;
       /* APPLE LOCAL end radar 5008110 */
-      /* APPLE LOCAL begin radar 7865106 */
-      else if (is_attribute_p ("weak_import", TREE_PURPOSE (chain)))
-        ;
-      /* APPLE LOCAL end radar 7865106 */
       else if (!use)
 	warning (0, "attribute %s is unknown - ignored",
 		  IDENTIFIER_POINTER (TREE_PURPOSE (chain)));
@@ -16622,21 +16570,13 @@ objc_synthesize_new_getter (tree class, tree class_method, tree property)
         /* APPLE LOCAL end radar 5376125 */
 
 	/* Handle struct-valued functions */
-        /* APPLE LOCAL begin 6671703 ARM 64-bit atomic properties */
-        if (
-#ifdef TARGET_ARM
-          (IS_ATOMIC (property)
-           && TREE_INT_CST_LOW (TYPE_SIZE_UNIT (ret_type)) > 4) ||
-#endif
-          ((TREE_CODE (ret_type) == RECORD_TYPE
-            || TREE_CODE (ret_type) == UNION_TYPE)
+	if ((TREE_CODE (ret_type) == RECORD_TYPE || TREE_CODE (ret_type) == UNION_TYPE)
             /* APPLE LOCAL radar 5080710 */
             && (TREE_ADDRESSABLE (ret_type) || targetm.calls.return_in_memory  (ret_type, 0))
-	    && (IS_ATOMIC (property) ||
-		(isStrong = ((flag_objc_gc || flag_objc_gc_only)
-			     && aggregate_contains_objc_pointer (ret_type))))))
-        /* APPLE LOCAL end 6671703 ARM 64-bit atomic properties */
-        {
+	    && (IS_ATOMIC (property) || 
+		(isStrong = ((flag_objc_gc || flag_objc_gc_only) 
+			     && aggregate_contains_objc_pointer (ret_type)))))
+	  {
 	    /* struct something tmp; 
 	       objc_copyStruct (&tmp, &structIvar, sizeof (struct something), isAtomic, false);
 	       return tmp;
@@ -16792,18 +16732,11 @@ objc_synthesize_new_setter (tree class, tree class_method, tree property)
         TREE_USED (rhs) = 1;
       /* APPLE LOCAL end radar 5232840 */
       ivar_type = TREE_TYPE (lhs);
-      /* APPLE LOCAL begin 6671703 ARM 64-bit atomic properties */
-      if (
-#ifdef TARGET_ARM
-        (IS_ATOMIC (property)
-         && TREE_INT_CST_LOW (TYPE_SIZE_UNIT (ivar_type)) > 4) ||
-#endif
-       ((TREE_CODE (ivar_type) == RECORD_TYPE || TREE_CODE (ivar_type) == UNION_TYPE)
+      if ((TREE_CODE (ivar_type) == RECORD_TYPE || TREE_CODE (ivar_type) == UNION_TYPE)
           /* APPLE LOCAL begin radar 5080710 */
           && IS_ATOMIC (property)
-          && (TREE_ADDRESSABLE (ivar_type) || targetm.calls.return_in_memory  (ivar_type, 0))))
+          && (TREE_ADDRESSABLE (ivar_type) || targetm.calls.return_in_memory  (ivar_type, 0)))
           /* APPLE LOCAL end radar 5080710 */
-      /* APPLE LOCAL end 6671703 ARM 64-bit atomic properties */
         {
 	  /* objc_copyStruct (&structIvar, &value, sizeof (struct something), true, false); */
 	  tree func_params;

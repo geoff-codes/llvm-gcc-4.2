@@ -1,7 +1,6 @@
 /* APPLE LOCAL file, Radar 6275985  */
 /* { dg-do compile { target *-*-darwin* } } */
-/* LLVM LOCAL - -fverbose-asm */
-/* { dg-options "-O1 -gdwarf-2 -dA -fverbose-asm" } */
+/* { dg-options "-O1 -gdwarf-2 -dA" } */
 /* { dg-final { scan-assembler "__debug_inlined" } } */
 /* { dg-final { scan-assembler "\[#;@]+\[ \t]+MIPS linkage name: \"_ZNK1UcvPKcEv\"" } } */
 /* { dg-final { scan-assembler "\[#;@]+\[ \t]+Function name: \"operator const char" } } */

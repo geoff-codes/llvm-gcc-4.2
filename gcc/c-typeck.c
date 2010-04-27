@@ -1692,10 +1692,8 @@ perform_integral_promotions (tree exp)
 tree
 default_conversion (tree exp)
 {
-  /* LLVM LOCAL begin */
   tree orig_exp;
-  tree type = TREE_TYPE (exp), promoted_type;
-  /* LLVM LOCAL end */
+  tree type = TREE_TYPE (exp);
   enum tree_code code = TREE_CODE (type);
 
   /* Functions and arrays have been converted during parsing.  */
@@ -1722,12 +1720,6 @@ default_conversion (tree exp)
 
   if (TREE_NO_WARNING (orig_exp))
     TREE_NO_WARNING (exp) = 1;
-
-  /* LLVM LOCAL begin */
-  promoted_type = targetm.type_promotes_to (type);
-  if (promoted_type != NULL_TREE)
-    return convert (promoted_type, exp);
-  /* LLVM LOCAL end */
 
   if (INTEGRAL_TYPE_P (type))
     return perform_integral_promotions (exp);
@@ -2154,7 +2146,6 @@ build_array_ref (tree array, tree index)
 				 "array indexing");
     }
 }
-
 
 /* Build an external reference to identifier ID.  FUN indicates
    whether this will be used for a function call.  LOC is the source
@@ -2218,14 +2209,9 @@ build_external_ref (tree id, int fun, location_t loc)
 	    {
 	      /* APPLE LOCAL begin radar 5803600 (C++ ci) */
 	      /* byref globals are directly accessed. */
-              /* APPLE LOCAL begin radar 7760213 */
-	      if (!gdecl) {
-                if (HasByrefArray(TREE_TYPE (decl)))
-       		  error ("cannot access __block variable of array type inside block");
+	      if (!gdecl)
 		/* build a decl for the byref variable. */
 		decl = build_block_byref_decl (id, decl, decl);
-              }
-              /* APPLE LOCAL end radar 7760213 */
 	      else
 		add_block_global_byref_list (decl);
 	    }

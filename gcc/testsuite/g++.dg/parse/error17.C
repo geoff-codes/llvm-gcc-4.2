@@ -1,7 +1,6 @@
 // PR c++/16965
 
-// LLVM LOCAL
-template <typename T> struct B { // { dg-error "" }
+template <typename T> struct B { 
   static int Bar(T); // { dg-error "" }
 }; 
 struct D : B<int>, B<char> {}; 

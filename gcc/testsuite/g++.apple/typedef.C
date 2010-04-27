@@ -1,8 +1,7 @@
 /* APPLE LOCAL file, C++ typedefs of anonymous structs.  */
 /* Radar 6007135  */
 /* { dg-do compile { target *-*-darwin* } } */
-/* LLVM LOCAL - -fverbose-asm */
-/* { dg-options "-O0 -gdwarf-2 -dA -fverbose-asm" } */
+/* { dg-options "-O0 -gdwarf-2 -dA" } */
 /* { dg-final { scan-assembler "DW_TAG_typedef" } } */
 
 

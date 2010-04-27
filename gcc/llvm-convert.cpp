@@ -1559,17 +1559,15 @@ Value *TreeToLLVM::EmitMemCpy(Value *DestPtr, Value *SrcPtr, Value *Size,
                               unsigned Align) {
   const Type *SBP = Type::getInt8PtrTy(Context);
   const Type *IntPtr = TD.getIntPtrType(Context);
-  Value *Ops[5] = {
+  Value *Ops[4] = {
     BitCastToType(DestPtr, SBP),
     BitCastToType(SrcPtr, SBP),
     CastToSIntType(Size, IntPtr),
-    ConstantInt::get(Type::getInt32Ty(Context), Align),
-    ConstantInt::get(Type::getInt1Ty(Context), false)
+    ConstantInt::get(Type::getInt32Ty(Context), Align)
   };
 
-  const Type *ArgTypes[3] = {SBP, SBP, IntPtr };
   Builder.CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::memcpy,
-                                               ArgTypes, 3), Ops, Ops+5);
+                                               &IntPtr, 1), Ops, Ops+4);
   return Ops[0];
 }
 
@@ -1577,17 +1575,15 @@ Value *TreeToLLVM::EmitMemMove(Value *DestPtr, Value *SrcPtr, Value *Size,
                                unsigned Align) {
   const Type *SBP = Type::getInt8PtrTy(Context);
   const Type *IntPtr = TD.getIntPtrType(Context);
-  Value *Ops[5] = {
+  Value *Ops[4] = {
     BitCastToType(DestPtr, SBP),
     BitCastToType(SrcPtr, SBP),
     CastToSIntType(Size, IntPtr),
-    ConstantInt::get(Type::getInt32Ty(Context), Align),
-    ConstantInt::get(Type::getInt1Ty(Context), false)
+    ConstantInt::get(Type::getInt32Ty(Context), Align)
   };
-  const Type *ArgTypes[3] = {SBP, SBP, IntPtr };
 
   Builder.CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::memmove,
-                                               ArgTypes, 3), Ops, Ops+5);
+                                               &IntPtr, 1), Ops, Ops+4);
   return Ops[0];
 }
 
@@ -1595,17 +1591,15 @@ Value *TreeToLLVM::EmitMemSet(Value *DestPtr, Value *SrcVal, Value *Size,
                               unsigned Align) {
   const Type *SBP = Type::getInt8PtrTy(Context);
   const Type *IntPtr = TD.getIntPtrType(Context);
-  Value *Ops[5] = {
+  Value *Ops[4] = {
     BitCastToType(DestPtr, SBP),
     CastToSIntType(SrcVal, Type::getInt8Ty(Context)),
     CastToSIntType(Size, IntPtr),
-    ConstantInt::get(Type::getInt32Ty(Context), Align),
-    ConstantInt::get(Type::getInt1Ty(Context), false)
+    ConstantInt::get(Type::getInt32Ty(Context), Align)
   };
 
-  const Type *ArgTypes[2] = {SBP, IntPtr };
   Builder.CreateCall(Intrinsic::getDeclaration(TheModule, Intrinsic::memset,
-                                               ArgTypes, 2), Ops, Ops+5);
+                                               &IntPtr, 1), Ops, Ops+4);
   return Ops[0];
 }
 
@@ -2095,9 +2089,6 @@ void TreeToLLVM::EmitLandingPads() {
     // Add selections for each handler.
     foreach_reachable_handler(i, false, AddHandler, &Handlers);
 
-    bool HasCleanup = false;
-    static GlobalVariable *CatchAll = 0;
-
     for (std::vector<struct eh_region *>::iterator I = Handlers.begin(),
          E = Handlers.end(); I != E; ++I) {
       struct eh_region *region = *I;
@@ -2124,17 +2115,9 @@ void TreeToLLVM::EmitLandingPads() {
 
         if (!TypeList) {
           // Catch-all - push a null pointer.
-          if (!CatchAll) {
-            Constant *Init =
-              Constant::getNullValue(Type::getInt8PtrTy(Context));
-
-            CatchAll = new GlobalVariable(*TheModule, Init->getType(), true,
-                                          GlobalVariable::LinkOnceAnyLinkage,
-                                          Init, ".llvm.eh.catch.all.value");
-            CatchAll->setSection("llvm.metadata");
-          }
-
-          Args.push_back(CatchAll);
+          Args.push_back(
+            Constant::getNullValue(Type::getInt8PtrTy(Context))
+          );
         } else {
           // Add the type infos.
           for (; TypeList; TypeList = TREE_CHAIN(TypeList)) {
@@ -2142,44 +2125,30 @@ void TreeToLLVM::EmitLandingPads() {
             Args.push_back(Emit(TType, 0));
           }
         }
-      } else {
-        // Cleanup.
-        HasCleanup = true;
       }
     }
 
     if (can_throw_external_1(i, false)) {
-      if (HasCleanup && Args.size() == 2) {
-        Args.push_back(ConstantInt::get(Type::getInt32Ty(Context), 0));
+      // Some exceptions from this region may not be caught by any handler.
+      // Since invokes are required to branch to the unwind label no matter
+      // what exception is being unwound, append a catch-all.
+
+      // The representation of a catch-all is language specific.
+      Value *CatchAll;
+      if (USING_SJLJ_EXCEPTIONS || !lang_eh_catch_all) {
+        // Use a "cleanup" - this should be good enough for most languages.
+        CatchAll = ConstantInt::get(Type::getInt32Ty(Context), 0);
       } else {
-        // Some exceptions from this region may not be caught by any handler.
-        // Since invokes are required to branch to the unwind label no matter
-        // what exception is being unwound, append a catch-all.
-
-        // The representation of a catch-all is language specific.
-        if (USING_SJLJ_EXCEPTIONS || !lang_eh_catch_all) {
-          // Use a "cleanup" - this should be good enough for most languages.
-          Args.push_back(ConstantInt::get(Type::getInt32Ty(Context), 0));
-        } else {
-          if (!CatchAll) {
-            Constant *Init = 0;
-            tree catch_all_type = lang_eh_catch_all();
-            if (catch_all_type == NULL_TREE)
-              // Use a C++ style null catch-all object.
-              Init = Constant::getNullValue(Type::getInt8PtrTy(Context));
-            else
-              // This language has a type that catches all others.
-              Init = cast<Constant>(Emit(catch_all_type, 0));
-
-            CatchAll = new GlobalVariable(*TheModule, Init->getType(), true,
-                                          GlobalVariable::LinkOnceAnyLinkage,
-                                          Init, ".llvm.eh.catch.all.value");
-            CatchAll->setSection("llvm.metadata");
-          }
-
-          Args.push_back(CatchAll);
-        }
+        tree catch_all_type = lang_eh_catch_all();
+        if (catch_all_type == NULL_TREE)
+          // Use a C++ style null catch-all object.
+          CatchAll = Constant::getNullValue(
+                                    Type::getInt8PtrTy(Context));
+        else
+          // This language has a type that catches all others.
+          CatchAll = Emit(catch_all_type, 0);
       }
+      Args.push_back(CatchAll);
     }
 
     // Emit the selector call.
@@ -2535,44 +2504,8 @@ Value *TreeToLLVM::EmitCALL_EXPR(tree exp, const MemRef *DestLoc) {
   // from thinking that control flow will fall into the subsequent block.
   //
   if (fndecl && TREE_THIS_VOLATILE(fndecl)) {
-    // LLVM LOCAL - begin radar 7885482
-    /*
-      Consider this pseudo-ObjC code:
-
-      // locking using some "lock" variable
-      @try {
-        // ...
-      } @catch (...) {
-        // ...
-        @throw;
-      } @finally {
-        // unlocking using the "lock" variable
-      }
-
-      The "lock" variable has live intervals from the top of the function
-      through the @try block and in the @finally block. On 32-bit x86, it
-      doesn't have a live interval in the @catch block. This is because in
-      32-bit mode Objective-C uses setjmp/longjmp for exception handling and not
-      the invoke/DWARF method.  The @throw is implemented as an
-      "objc_exception_throw" call marked with NORETURN. The upshot is that if
-      the "lock" variable is placed into a stack slot, there won't be an
-      indication that the "lock" can be used after the "objc_exception_throw"
-      executes. With the invoke/DWARF method, the unwind edge of the invoke
-      points to the @finally block, so the "lock" variable will have a live
-      interval leading to there.
-
-      The solution is to have the "objc_exception_throw" behave in a similar
-      manner to the invoke/DWARF method. That is remove the "NORETURN"
-      attribute, allowing it to have an edge from the call to the @finally
-      block.  */
-    if (flag_objc_abi == 1 && 
-        Callee->getName() == "objc_exception_throw")
-      cast<Function>(Callee)->removeFnAttr(Attribute::NoReturn);
-    else {
-      Builder.CreateUnreachable();
-      EmitBlock(BasicBlock::Create(Context, ""));
-    }
-    // LLVM LOCAL - end radar 7885482
+    Builder.CreateUnreachable();
+    EmitBlock(BasicBlock::Create(Context, ""));
   }
   return Result;
 }
@@ -2975,41 +2908,6 @@ Value *TreeToLLVM::EmitCallOf(Value *Callee, tree exp, const MemRef *DestLoc,
     Call = Builder.CreateCall(Callee, CallOperands.begin(), CallOperands.end());
     cast<CallInst>(Call)->setCallingConv(CallingConvention);
     cast<CallInst>(Call)->setAttributes(PAL);
-
-    // LLVM LOCAL - begin radar 7885482
-    /*
-      Consider this pseudo-ObjC code:
-
-      // locking using some "lock" variable
-      @try {
-        // ...
-      } @catch (...) {
-        // ...
-        @throw;
-      } @finally {
-        // unlocking using the "lock" variable
-      }
-
-      The "lock" variable has live intervals from the top of the function
-      through the @try block and in the @finally block. On 32-bit x86, it
-      doesn't have a live interval in the @catch block. This is because in
-      32-bit mode Objective-C uses setjmp/longjmp for exception handling and not
-      the invoke/DWARF method.  The @throw is implemented as an
-      "objc_exception_throw" call marked with NORETURN. The upshot is that if
-      the "lock" variable is placed into a stack slot, there won't be an
-      indication that the "lock" can be used after the "objc_exception_throw"
-      executes. With the invoke/DWARF method, the unwind edge of the invoke
-      points to the @finally block, so the "lock" variable will have a live
-      interval leading to there.
-
-      The solution is to have the "objc_exception_throw" behave in a similar
-      manner to the invoke/DWARF method. That is remove the "NORETURN"
-      attribute, allowing it to have an edge from the call to the @finally
-      block.  */
-    if (flag_objc_abi == 1 && 
-        Callee->getName() == "objc_exception_throw")
-      cast<CallInst>(Call)->removeAttribute(~0U, Attribute::NoReturn);
-    // LLVM LOCAL - end radar 7885482
   } else {
     BasicBlock *NextBlock = BasicBlock::Create(Context, "invcont");
     Call = Builder.CreateInvoke(Callee, NextBlock, LandingPad,
@@ -3147,20 +3045,6 @@ void TreeToLLVM::HandleMultiplyDefinedGimpleTemporary(tree Var) {
 Value *TreeToLLVM::EmitMODIFY_EXPR(tree exp, const MemRef *DestLoc) {
   tree lhs = TREE_OPERAND (exp, 0);
   tree rhs = TREE_OPERAND (exp, 1);
-
-  // Avoid generating stores of empty types.  This is rare, but necessary
-  // to support the compressed_pair template.
-  if (lang_hooks.empty_type_p(TREE_TYPE(exp))) {
-    if (TREE_SIDE_EFFECTS(rhs)) {
-      // There's a side-effect; alloc a temporary to receive the
-      // value, if any.  Do not store into lhs; we must not
-      // reference it.
-      const Type *RHSTy = ConvertType(TREE_TYPE(rhs));
-      MemRef dest = CreateTempLoc(RHSTy);
-      return Emit(rhs, &dest);
-    } else
-      return (Value *)0;
-  }
 
   // If this is the definition of a gimple temporary, set its DECL_LLVM to the
   // RHS.
@@ -3313,29 +3197,6 @@ Value *TreeToLLVM::EmitMODIFY_EXPR(tree exp, const MemRef *DestLoc) {
   return RHS;
 }
 
-Value *TreeToLLVM::EmitFP16Conversion(tree fromty, tree toty, Value *V) {
-  bool OpIsSigned = !TYPE_UNSIGNED(fromty);
-  bool ExpIsSigned = !TYPE_UNSIGNED(toty);
-
-  if (SCALAR_FLOAT_TYPE_P (fromty) && TYPE_PRECISION (fromty) == 16) {
-    // HF -> something cast is performed as HF -> SF -> something
-    Value *Result =
-      Builder.CreateCall(Intrinsic::getDeclaration(TheModule,
-						   Intrinsic::convert_from_fp16),
-			 &V, &V+1);
-    return CastToAnyType(Result, false, ConvertType(toty), ExpIsSigned);
-  } else if (SCALAR_FLOAT_TYPE_P (toty) && TYPE_PRECISION (toty) == 16) {
-    // something -> HF cast is performed as something -> SF -> HF
-    V = CastToAnyType(V, OpIsSigned, Type::getFloatTy(Context), false);
-    return Builder.CreateCall(Intrinsic::getDeclaration(TheModule,
-						Intrinsic::convert_to_fp16),
-			      &V, &V+1);
-  }
-
-  return 0;
-}
-
-
 Value *TreeToLLVM::EmitNOP_EXPR(tree exp, const MemRef *DestLoc) {
   if (TREE_CODE(TREE_TYPE(exp)) == VOID_TYPE &&    // deleted statement.
       TREE_CODE(TREE_OPERAND(exp, 0)) == INTEGER_CST)
@@ -3347,14 +3208,9 @@ Value *TreeToLLVM::EmitNOP_EXPR(tree exp, const MemRef *DestLoc) {
   if (DestLoc == 0) {
     // Scalar to scalar copy.
     assert(!isAggregateTreeType(TREE_TYPE(Op))
-	   && "Aggregate to scalar nop_expr!");
+           && "Aggregate to scalar nop_expr!");
     Value *OpVal = Emit(Op, DestLoc);
     if (Ty->isVoidTy()) return 0;
-
-    // Special case: something <-> HF casts are made via special intrinsics.
-    if (Value *V = EmitFP16Conversion(TREE_TYPE(Op), TREE_TYPE(exp), OpVal))
-      return V;
-
     return CastToAnyType(OpVal, OpIsSigned, Ty, ExpIsSigned);
   } else if (isAggregateTreeType(TREE_TYPE(Op))) {
     // Aggregate to aggregate copy.
@@ -3375,16 +3231,10 @@ Value *TreeToLLVM::EmitNOP_EXPR(tree exp, const MemRef *DestLoc) {
 
 Value *TreeToLLVM::EmitCONVERT_EXPR(tree exp, const MemRef *DestLoc) {
   assert(!DestLoc && "Cannot handle aggregate casts!");
-  tree op0 = TREE_OPERAND(exp, 0);
-  tree opty = TREE_TYPE(op0), expty = TREE_TYPE(exp);
-  Value *Op = Emit(op0, 0);
-
-  // Special case: something <-> HF casts are made via special intrinsics.
-  if (Value *V = EmitFP16Conversion(opty, expty, Op))
-    return V;
-
-  bool OpIsSigned = !TYPE_UNSIGNED(opty), ExpIsSigned = !TYPE_UNSIGNED(expty);
-  return CastToAnyType(Op, OpIsSigned, ConvertType(expty), ExpIsSigned);
+  Value *Op = Emit(TREE_OPERAND(exp, 0), 0);
+  bool OpIsSigned = !TYPE_UNSIGNED(TREE_TYPE(TREE_OPERAND(exp, 0)));
+  bool ExpIsSigned = !TYPE_UNSIGNED(TREE_TYPE(exp));
+  return CastToAnyType(Op, OpIsSigned, ConvertType(TREE_TYPE(exp)),ExpIsSigned);
 }
 
 Value *TreeToLLVM::EmitVIEW_CONVERT_EXPR(tree exp, const MemRef *DestLoc) {
@@ -3614,40 +3464,31 @@ Value *TreeToLLVM::EmitTRUTH_NOT_EXPR(tree exp) {
 Value *TreeToLLVM::EmitCompare(tree exp, unsigned UIOpc, unsigned SIOpc,
                                unsigned FPPred, const Type *DestTy) {
   // Get the type of the operands
-  tree lhsty = TREE_TYPE(TREE_OPERAND(exp, 0));
-  tree rhsty = TREE_TYPE(TREE_OPERAND(exp, 1));
+  tree Op0Ty = TREE_TYPE(TREE_OPERAND(exp,0));
 
   Value *Result;
 
   // Deal with complex types
-  if (TREE_CODE(lhsty) == COMPLEX_TYPE) {
+  if (TREE_CODE(Op0Ty) == COMPLEX_TYPE) {
     Result = EmitComplexBinOp(exp, 0);  // Complex ==/!=
   } else {
     // Get the compare operands, in the right type. Comparison of struct is not
     // allowed, so this is safe as we already handled complex (struct) type.
     Value *LHS = Emit(TREE_OPERAND(exp, 0), 0);
     Value *RHS = Emit(TREE_OPERAND(exp, 1), 0);
-
-    // FIXME: This should be generalized for other storage-only types, if any.
-    if (Value *V = EmitFP16Conversion(lhsty, float_type_node, LHS)) {
-      LHS = V; lhsty = float_type_node;
-    }
-    if (Value *V = EmitFP16Conversion(rhsty, float_type_node, RHS)) {
-      RHS = V; rhsty = float_type_node;
-    }
-
-    bool LHSIsSigned = !TYPE_UNSIGNED(lhsty);
-    bool RHSIsSigned = !TYPE_UNSIGNED(rhsty);
+    bool LHSIsSigned = !TYPE_UNSIGNED(TREE_TYPE(TREE_OPERAND(exp, 0)));
+    bool RHSIsSigned = !TYPE_UNSIGNED(TREE_TYPE(TREE_OPERAND(exp, 1)));
     RHS = CastToAnyType(RHS, RHSIsSigned, LHS->getType(), LHSIsSigned);
     assert(LHS->getType() == RHS->getType() && "Binop type equality failure!");
 
-    if (FLOAT_TYPE_P(lhsty)) {
+    if (FLOAT_TYPE_P(Op0Ty)) {
       // Handle floating point comparisons, if we get here.
       Result = Builder.CreateFCmp(FCmpInst::Predicate(FPPred), LHS, RHS);
     } else {
       // Handle the integer/pointer cases.  Determine which predicate to use based
       // on signedness.
-      ICmpInst::Predicate pred = ICmpInst::Predicate(LHSIsSigned ? SIOpc: UIOpc);
+      ICmpInst::Predicate pred =
+        ICmpInst::Predicate(TYPE_UNSIGNED(Op0Ty) ? UIOpc : SIOpc);
 
       // Get the compare instructions
       Result = Builder.CreateICmp(pred, LHS, RHS);
@@ -3667,35 +3508,23 @@ Value *TreeToLLVM::EmitCompare(tree exp, unsigned UIOpc, unsigned SIOpc,
 /// EmitBinOp - 'exp' is a binary operator.
 ///
 Value *TreeToLLVM::EmitBinOp(tree exp, const MemRef *DestLoc, unsigned Opc) {
-  tree expty = TREE_TYPE(exp);
-  const Type *Ty = ConvertType(expty);
+  const Type *Ty = ConvertType(TREE_TYPE(exp));
   if (Ty->isPointerTy())
     return EmitPtrBinOp(exp, Opc);   // Pointer arithmetic!
   if (Ty->isStructTy())
     return EmitComplexBinOp(exp, DestLoc);
   assert(Ty->isSingleValueType() && DestLoc == 0 &&
-	 "Bad binary operation!");
-
-  tree lhsty = TREE_TYPE(TREE_OPERAND(exp, 0));
-  tree rhsty = TREE_TYPE(TREE_OPERAND(exp, 1));
+         "Bad binary operation!");
 
   Value *LHS = Emit(TREE_OPERAND(exp, 0), 0);
   Value *RHS = Emit(TREE_OPERAND(exp, 1), 0);
 
-  // FIXME: This should be generalized for other storage-only types, if any.
-  if (Value *V = EmitFP16Conversion(lhsty, float_type_node, LHS)) {
-    LHS = V; lhsty = float_type_node; Ty = Type::getFloatTy(Context);
-  }
-  if (Value *V = EmitFP16Conversion(rhsty, float_type_node, RHS)) {
-    RHS = V; rhsty = float_type_node; Ty = Type::getFloatTy(Context);
-  }
-
   // GCC has no problem with things like "xor uint X, int 17", and X-Y, where
   // X and Y are pointer types, but the result is an integer.  As such, convert
   // everything to the result type.
-  bool LHSIsSigned = !TYPE_UNSIGNED(lhsty);
-  bool RHSIsSigned = !TYPE_UNSIGNED(rhsty);
-  bool TyIsSigned  = !TYPE_UNSIGNED(expty);
+  bool LHSIsSigned = !TYPE_UNSIGNED(TREE_TYPE(TREE_OPERAND(exp, 0)));
+  bool RHSIsSigned = !TYPE_UNSIGNED(TREE_TYPE(TREE_OPERAND(exp, 1)));
+  bool TyIsSigned  = !TYPE_UNSIGNED(TREE_TYPE(exp));
   bool IsExactDiv  = TREE_CODE(exp) == EXACT_DIV_EXPR;
 
   LHS = CastToAnyType(LHS, LHSIsSigned, Ty, TyIsSigned);
@@ -3709,7 +3538,7 @@ Value *TreeToLLVM::EmitBinOp(tree exp, const MemRef *DestLoc, unsigned Opc) {
   if (isLogicalOp &&
       (Ty->isFloatingPointTy() ||
        (Ty->isVectorTy() &&
-	cast<VectorType>(Ty)->getElementType()->isFloatingPointTy()))) {
+        cast<VectorType>(Ty)->getElementType()->isFloatingPointTy()))) {
     Ty = getSuitableBitCastIntType(Ty);
     LHS = BitCastToType(LHS, Ty);
     RHS = BitCastToType(RHS, Ty);
@@ -3718,21 +3547,16 @@ Value *TreeToLLVM::EmitBinOp(tree exp, const MemRef *DestLoc, unsigned Opc) {
   Value *V;
   if (Opc == Instruction::SDiv && IsExactDiv)
     V = Builder.CreateExactSDiv(LHS, RHS);
-  else if (Opc == Instruction::Add && !TYPE_OVERFLOW_WRAPS(expty))
+  else if (Opc == Instruction::Add && !TYPE_OVERFLOW_WRAPS(TREE_TYPE(exp)))
     V = Builder.CreateNSWAdd(LHS, RHS);
-  else if (Opc == Instruction::Sub && !TYPE_OVERFLOW_WRAPS(expty))
+  else if (Opc == Instruction::Sub && !TYPE_OVERFLOW_WRAPS(TREE_TYPE(exp)))
     V = Builder.CreateNSWSub(LHS, RHS);
-  else if (Opc == Instruction::Mul && !TYPE_OVERFLOW_WRAPS(expty))
+  else if (Opc == Instruction::Mul && !TYPE_OVERFLOW_WRAPS(TREE_TYPE(exp)))
     V = Builder.CreateNSWMul(LHS, RHS);
   else
     V = Builder.CreateBinOp((Instruction::BinaryOps)Opc, LHS, RHS);
   if (ResTy != Ty)
     V = BitCastToType(V, ResTy);
-
-  // FIXME: This should be generalized for other storage-only types, if any.
-  if (Value *CV = EmitFP16Conversion(float_type_node, expty, V))
-    V = CV;
-
   return V;
 }
 
@@ -4171,11 +3995,6 @@ Value *TreeToLLVM::EmitRESX_EXPR(tree exp) {
 //               ... Inline Assembly and Register Variables ...
 //===----------------------------------------------------------------------===//
 
-// LLVM_GET_REG_NAME - Default to use GCC's register names.  Targets may
-// override this to use different names for some registers.
-#ifndef LLVM_GET_REG_NAME
-#define LLVM_GET_REG_NAME(REG_NAME, REG_NUM) reg_names[REG_NUM]
-#endif
 
 /// Reads from register variables are handled by emitting an inline asm node
 /// that copies the value out of the specified register.
@@ -4193,9 +4012,7 @@ Value *TreeToLLVM::EmitReadOfRegisterVariable(tree decl,
   // Turn this into a 'tmp = call Ty asm "", "={reg}"()'.
   FunctionType *FTy = FunctionType::get(Ty, std::vector<const Type*>(),false);
 
-  const char *Name = extractRegisterName(decl);
-  int RegNum = decode_reg_name(Name);
-  Name = LLVM_GET_REG_NAME(Name, RegNum);
+  const char *Name = reg_names[decode_reg_name(extractRegisterName(decl))];
 
   InlineAsm *IA = InlineAsm::get(FTy, "", "={"+std::string(Name)+"}", false);
   CallInst *Call = Builder.CreateCall(IA);
@@ -4215,9 +4032,7 @@ void TreeToLLVM::EmitModifyOfRegisterVariable(tree decl, Value *RHS) {
   ArgTys.push_back(ConvertType(TREE_TYPE(decl)));
   FunctionType *FTy = FunctionType::get(Type::getVoidTy(Context), ArgTys, false);
 
-  const char *Name = extractRegisterName(decl);
-  int RegNum = decode_reg_name(Name);
-  Name = LLVM_GET_REG_NAME(Name, RegNum);
+  const char *Name = reg_names[decode_reg_name(extractRegisterName(decl))];
 
   InlineAsm *IA = InlineAsm::get(FTy, "", "{"+std::string(Name)+"}", true);
   CallInst *Call = Builder.CreateCall(IA, RHS);
@@ -4588,6 +4403,23 @@ static void FreeConstTupleStrings(const char **ReplacementStrings,
     free((char *)ReplacementStrings[i]);
 }
 
+// When extracting a register name from a DECL_HARD_REGISTER variable,
+// we normally want to look up RegNum in reg_names.  This works on most
+// targets, where ADDITIONAL_REGISTER_NAMES are true synonyms.  It does not
+// work on x86, where ADDITIONAL_REGISTER_NAMES are overlapping subregisters;
+// in particular AH and AL can't be distinguished if we go through reg_names.
+static const char* getConstraintRegNameFromGccTables(const char *RegName,
+                                                     unsigned int RegNum) {
+#ifdef LLVM_DO_NOT_USE_REG_NAMES
+  (void)RegNum;
+  if (*RegName == '%')
+    RegName++;
+  return RegName;
+#else
+  return reg_names[RegNum];
+#endif
+}
+
 Value *TreeToLLVM::EmitASM_EXPR(tree exp) {
   unsigned NumInputs = list_length(ASM_INPUTS(exp));
   unsigned NumOutputs = list_length(ASM_OUTPUTS(exp));
@@ -4705,7 +4537,7 @@ Value *TreeToLLVM::EmitASM_EXPR(tree exp) {
       const char* RegName = extractRegisterName(Operand);
       int RegNum = decode_reg_name(RegName);
       if (RegNum >= 0) {
-        RegName = LLVM_GET_REG_NAME(RegName, RegNum);
+        RegName = getConstraintRegNameFromGccTables(RegName, RegNum);
         unsigned RegNameLen = strlen(RegName);
         char *NewConstraint = (char*)alloca(RegNameLen+4);
         NewConstraint[0] = '=';
@@ -4870,7 +4702,7 @@ Value *TreeToLLVM::EmitASM_EXPR(tree exp) {
       const char *RegName = extractRegisterName(Val);
       int RegNum = decode_reg_name(RegName);
       if (RegNum >= 0) {
-        RegName = LLVM_GET_REG_NAME(RegName, RegNum);
+        RegName = getConstraintRegNameFromGccTables(RegName, RegNum);
         ConstraintStr += '{';
         ConstraintStr += RegName;
         ConstraintStr += '}';
@@ -4913,7 +4745,7 @@ Value *TreeToLLVM::EmitASM_EXPR(tree exp) {
       ConstraintStr += ",~{memory}";
       break;
     default:     // Normal register name.
-      RegName = LLVM_GET_REG_NAME(RegName, RegCode);
+      RegName = getConstraintRegNameFromGccTables(RegName, RegCode);
       ConstraintStr += ",~{";
       ConstraintStr += RegName;
       ConstraintStr += "}";
@@ -5057,7 +4889,8 @@ Value *TreeToLLVM::BuildVectorShuffle(Value *InVec1, Value *InVec2, ...) {
 //                     ... Builtin Function Expansion ...
 //===----------------------------------------------------------------------===//
 
-/// EmitFrontendExpandedBuiltinCall - We allow the target to do some amount
+/// EmitFrontendExpandedBuiltinCall - For MD builtins that do not have a
+/// directly corresponding LLVM intrinsic, we allow the target to do some amount
 /// of lowering.  This allows us to avoid having intrinsics for operations that
 /// directly correspond to LLVM constructs.
 ///
@@ -5213,17 +5046,14 @@ bool TreeToLLVM::EmitBuiltinCall(tree exp, tree fndecl,
 #ifdef LLVM_TARGET_INTRINSIC_PREFIX
       TargetPrefix = LLVM_TARGET_INTRINSIC_PREFIX;
 #endif
-      // If the backend has some special code to lower, go ahead and try to
-      // do that first.
-      if (EmitFrontendExpandedBuiltinCall(exp, fndecl, DestLoc, Result))
-        return true;
-      
       // If this builtin directly corresponds to an LLVM intrinsic, get the
       // IntrinsicID now.
       const char *BuiltinName = IDENTIFIER_POINTER(DECL_NAME(fndecl));
       Intrinsic::ID IntrinsicID =
         Intrinsic::getIntrinsicForGCCBuiltin(TargetPrefix, BuiltinName);
       if (IntrinsicID == Intrinsic::not_intrinsic) {
+        if (EmitFrontendExpandedBuiltinCall(exp, fndecl, DestLoc, Result))
+          return true;
 
         error("%Hunsupported target builtin %<%s%> used", &EXPR_LOCATION(exp),
               BuiltinName);
@@ -7055,11 +6885,7 @@ LValue TreeToLLVM::EmitLV_ARRAY_REF(tree exp) {
   if (VOID_TYPE_P(TREE_TYPE(ArrayTreeType)))
     return LValue(Builder.CreateGEP(ArrayAddr, IndexVal), 1);
 
-  tree EltSize = array_ref_element_size(exp);
-  if (EltSize == 0)  // Force emit an error on invalid case.
-    EltSize = size_in_bytes(ElementType);
-  
-  Value *TypeSize = Emit(EltSize, 0);
+  Value *TypeSize = Emit(array_ref_element_size(exp), 0);
   TypeSize = CastToUIntType(TypeSize, IntPtrTy);
   IndexVal = Builder.CreateMul(IndexVal, TypeSize);
   unsigned Alignment = 1;
@@ -7202,11 +7028,6 @@ LValue TreeToLLVM::EmitLV_COMPONENT_REF(tree exp) {
       // offset, the field is known to be 4-byte aligned.
       LVAlign = MinAlign(LVAlign, ByteOffset);
     }
-
-    // Since we're using GCC's offset, we're obliged to use GCC's
-    // "shrink-wrapped" type for the reference, lest we reference
-    // memory outside of this struct.
-    FieldTy = ConvertType(TREE_TYPE(FieldDecl));
 
     Value *Ptr = CastToType(Instruction::PtrToInt, StructAddrLV.Ptr,
                             Offset->getType());
@@ -7599,8 +7420,7 @@ Constant *TreeConstantToLLVM::ConvertINTEGER_CST(tree exp) {
 
 Constant *TreeConstantToLLVM::ConvertREAL_CST(tree exp) {
   const Type *Ty = ConvertType(TREE_TYPE(exp));
-  assert((Ty->isFloatingPointTy() ||
-	  Ty->isIntegerTy(16)) && "Integer REAL_CST?");
+  assert(Ty->isFloatingPointTy() && "Integer REAL_CST?");
   long RealArr[2];
   union {
     int UArr[2];
@@ -7642,7 +7462,8 @@ Constant *TreeConstantToLLVM::ConvertREAL_CST(tree exp) {
               ((uint64_t)((uint32_t)RealArr[1]) << 32);
     UArr[1] = (uint16_t)RealArr[2];
     return ConstantFP::get(Context, APFloat(APInt(80, 2, UArr)));
-  } else if (Ty->isPPC_FP128Ty() || Ty->isFP128Ty()) {
+  } else if (Ty->isPPC_FP128Ty() ||
+             Ty->isFP128Ty()) {
     long RealArr[4];
     uint64_t UArr[2];
     REAL_VALUE_TO_TARGET_LONG_DOUBLE(TREE_REAL_CST(exp), RealArr);
@@ -7654,10 +7475,6 @@ Constant *TreeConstantToLLVM::ConvertREAL_CST(tree exp) {
     return ConstantFP::get(Context,
                            APFloat(APInt(128, 2, UArr),
                                    /*isIEEE*/ Ty->isFP128Ty()));
-  } else if (Ty->isIntegerTy(16)) {
-    long RealVal;
-    REAL_VALUE_TO_TARGET_HALF(TREE_REAL_CST(exp), RealVal);
-    return ConstantInt::get(Context, APInt(16, RealVal));
   }
   assert(0 && "Floating point type not handled yet");
   return 0;   // outwit compiler warning
