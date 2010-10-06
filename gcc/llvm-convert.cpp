@@ -344,7 +344,6 @@ namespace {
     void HandleScalarArgument(const llvm::Type *LLVMTy, tree type,
                               unsigned RealSize = 0) {
       Value *ArgVal = AI;
-      LLVMTy = LLVM_ADJUST_MMX_PARAMETER_TYPE(LLVMTy);
       if (ArgVal->getType() != LLVMTy) {
         if (ArgVal->getType()->isPointerTy() && LLVMTy->isPointerTy()) {
           // If this is GCC being sloppy about pointer types, insert a bitcast.
@@ -437,13 +436,13 @@ namespace {
 // passed in memory byval.
 static bool isPassedByVal(tree type, const Type *Ty,
                           std::vector<const Type*> &ScalarArgs,
-                          CallingConv::ID &CC) {
+                          bool isShadowRet, CallingConv::ID &CC) {
   if (LLVM_SHOULD_PASS_AGGREGATE_USING_BYVAL_ATTR(type, Ty))
     return true;
 
   std::vector<const Type*> Args;
   if (LLVM_SHOULD_PASS_AGGREGATE_IN_MIXED_REGS(type, Ty, CC, Args) &&
-      LLVM_AGGREGATE_PARTIALLY_PASSED_IN_REGS(Args, ScalarArgs,
+      LLVM_AGGREGATE_PARTIALLY_PASSED_IN_REGS(Args, ScalarArgs, isShadowRet,
                                               CC))
     // We want to pass the whole aggregate in registers but only some of the
     // registers are available.
@@ -674,19 +673,17 @@ void TreeToLLVM::StartFunctionBody() {
   FunctionPrologArgumentConversion Client(FnDecl, AI, Builder, CallingConv);
   DefaultABI ABIConverter(Client);
 
-  // Scalar arguments processed so far.
-  std::vector<const Type*> ScalarArgs;
-
   // Handle the DECL_RESULT.
   ABIConverter.HandleReturnType(TREE_TYPE(TREE_TYPE(FnDecl)), FnDecl,
-                                DECL_BUILT_IN(FnDecl),
-                                ScalarArgs);
+                                DECL_BUILT_IN(FnDecl));
   // Remember this for use by FinishFunctionBody.
   ReturnOffset = Client.Offset;
 
   // Prepend the static chain (if any) to the list of arguments.
   tree Args = static_chain ? static_chain : DECL_ARGUMENTS(FnDecl);
 
+  // Scalar arguments processed so far.
+  std::vector<const Type*> ScalarArgs;
   while (Args) {
     const char *Name = "unnamed_arg";
     if (DECL_NAME(Args)) Name = IDENTIFIER_POINTER(DECL_NAME(Args));
@@ -699,7 +696,7 @@ void TreeToLLVM::StartFunctionBody() {
          !LLVM_BYVAL_ALIGNMENT_TOO_SMALL(TREE_TYPE(Args))) ||
         (!ArgTy->isSingleValueType() &&
          isPassedByVal(TREE_TYPE(Args), ArgTy, ScalarArgs,
-                       CallingConv) &&
+                       Client.isShadowReturn(), CallingConv) &&
          !LLVM_BYVAL_ALIGNMENT_TOO_SMALL(TREE_TYPE(Args)))) {
       // If the value is passed by 'invisible reference' or 'byval reference',
       // the l-value for the argument IS the argument itself.  But for byval
@@ -1320,9 +1317,7 @@ LValue TreeToLLVM::EmitLV(tree exp) {
   // node.  This may not hold for bitfields because the type of a bitfield need
   // not match the type of the value being loaded out of it.  Since LLVM has no
   // void* type, don't insist that void* be converted to a specific LLVM type.
-  // For MMX registers, we deliberately changed the type to x86mmx here.
   assert((LV.isBitfield() || VOID_TYPE_P(TREE_TYPE(exp)) ||
-          LLVM_IS_DECL_MMX_REGISTER(exp) ||
           LV.Ptr->getType() == ConvertType(TREE_TYPE(exp))->getPointerTo()) &&
          "LValue has wrong type!");
 
@@ -1861,9 +1856,6 @@ void TreeToLLVM::EmitAutomaticVariableDecl(tree decl) {
       Ty = Type::getInt8Ty(Context);
     }
   }
-
-  if (LLVM_IS_DECL_MMX_REGISTER(decl))
-    Ty = Type::getX86_MMXTy(Context);
 
   unsigned Alignment = 0; // Alignment in bytes.
 
@@ -2506,8 +2498,6 @@ Value *TreeToLLVM::EmitLoadOfLValue(tree exp, const MemRef *DestLoc) {
   LValue LV = EmitLV(exp);
   bool isVolatile = TREE_THIS_VOLATILE(exp);
   const Type *Ty = ConvertType(TREE_TYPE(exp));
-  if (LLVM_IS_DECL_MMX_REGISTER(exp))
-    Ty = Type::getX86_MMXTy(Context);
   unsigned Alignment = LV.getAlignment();
 
   if (!LV.isBitfield()) {
@@ -3022,17 +3012,16 @@ Value *TreeToLLVM::EmitCallOf(Value *Callee, tree exp, const MemRef *DestLoc,
   DefaultABI ABIConverter(Client);
 
   // Handle the result, including struct returns.
-  std::vector<const Type*> ScalarArgs;
   ABIConverter.HandleReturnType(TREE_TYPE(exp),
                                 fndecl ? fndecl : exp,
-                                fndecl ? DECL_BUILT_IN(fndecl) : false,
-                                ScalarArgs);
+                                fndecl ? DECL_BUILT_IN(fndecl) : false);
 
   // Pass the static chain, if any, as the first parameter.
   if (TREE_OPERAND(exp, 2))
     CallOperands.push_back(Emit(TREE_OPERAND(exp, 2), 0));
 
   // Loop over the arguments, expanding them and adding them to the op list.
+  std::vector<const Type*> ScalarArgs;
   for (tree arg = TREE_OPERAND(exp, 1); arg; arg = TREE_CHAIN(arg)) {
     tree type = TREE_TYPE(TREE_VALUE(arg));
     const Type *ArgTy = ConvertType(type);
@@ -4956,8 +4945,6 @@ Value *TreeToLLVM::EmitASM_EXPR(tree exp) {
       const Type *LLVMTy = ConvertType(type);
 
       Value *Op = 0;
-      if (LLVM_IS_DECL_MMX_REGISTER(Val))
-        LLVMTy = Type::getX86_MMXTy(Context);
       const Type *OpTy = LLVMTy;
       if (LLVMTy->isSingleValueType()) {
         if (TREE_CODE(Val)==ADDR_EXPR &&
@@ -7529,8 +7516,6 @@ LValue TreeToLLVM::EmitLV_DECL(tree exp) {
   // If we have "extern void foo", make the global have type {} instead of
   // type void.
   if (Ty->isVoidTy()) Ty = StructType::get(Context);
-  if (LLVM_IS_DECL_MMX_REGISTER(exp))
-    Ty = Type::getX86_MMXTy(Context);
   const PointerType *PTy = Ty->getPointerTo();
   unsigned Alignment = Ty->isSized() ? TD.getABITypeAlignment(Ty) : 1;
   if (DECL_ALIGN(exp)) {

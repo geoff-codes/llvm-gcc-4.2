@@ -302,7 +302,7 @@ static inline const Type* getLLVMAggregateTypeForStructReturn(tree type) {
 // the aggregate. Note, this routine should return false if none of the needed
 // registers are available.
 #ifndef LLVM_AGGREGATE_PARTIALLY_PASSED_IN_REGS
-#define LLVM_AGGREGATE_PARTIALLY_PASSED_IN_REGS(E, SE, CC) \
+#define LLVM_AGGREGATE_PARTIALLY_PASSED_IN_REGS(E, SE, ISR, CC) \
     false
 #endif
 
@@ -380,14 +380,6 @@ void llvm_default_extract_multiple_return_value(Value *Src, Value *Dest,
   assert (0 && "LLVM_EXTRACT_MULTIPLE_RETURN_VALUE is not implemented!");
 }
 
-#ifndef LLVM_IS_DECL_MMX_REGISTER
-#define LLVM_IS_DECL_MMX_REGISTER(decl) false
-#endif
-
-#ifndef LLVM_ADJUST_MMX_PARAMETER_TYPE
-#define LLVM_ADJUST_MMX_PARAMETER_TYPE(LLVMTy) LLVMTy
-#endif
-
 /// DefaultABI - This class implements the default LLVM ABI where structures are
 /// passed by decimating them into individual components and unions are passed
 /// by passing the largest member of the union.
@@ -404,8 +396,7 @@ public:
   /// return type. It potentially breaks down the argument and invokes methods
   /// on the client that indicate how its pieces should be handled.  This
   /// handles things like returning structures via hidden parameters.
-  void HandleReturnType(tree type, tree fn, bool isBuiltin,
-                        std::vector<const Type*> &ScalarElts);
+  void HandleReturnType(tree type, tree fn, bool isBuiltin);
 
   /// HandleArgument - This is invoked by the target-independent code for each
   /// argument type passed into the function.  It potentially breaks down the

@@ -505,7 +505,7 @@ DIDescriptor DebugInfo::findRegion(tree exp) {
 
   std::map<tree_node *, WeakVH>::iterator I = RegionMap.find(Node);
   if (I != RegionMap.end())
-    if (MDNode *R = dyn_cast_or_null<MDNode>(&*I->second))
+    if (MDNode *R = dyn_cast_or_null<MDNode>(I->second))
       return DIDescriptor(R);
 
   if (TYPE_P (Node)) {
@@ -832,7 +832,7 @@ DIType DebugInfo::createPointerType(tree type) {
     DW_TAG_reference_type: DW_TAG_pointer_type;
   unsigned Flags = 0;
   if (type_is_block_byref_struct(type))
-    Flags |= llvm::DIDescriptor::FlagBlockByrefStruct;
+    Flags |= llvm::DIType::FlagBlockByrefStruct;
 
   // Check if this pointer type has a name.
   if (tree TyName = TYPE_NAME(type)) 
@@ -995,16 +995,16 @@ DIType DebugInfo::createStructType(tree type) {
   expanded_location Loc = GetNodeLocation(TREE_CHAIN(type), false);
   unsigned SFlags = 0;
   if (TYPE_BLOCK_IMPL_STRUCT(type))
-    SFlags |= llvm::DIDescriptor::FlagAppleBlock;
+    SFlags |= llvm::DIType::FlagAppleBlock;
   if (type_is_block_byref_struct(type))
-    SFlags |= llvm::DIDescriptor::FlagBlockByrefStruct;
+    SFlags |= llvm::DIType::FlagBlockByrefStruct;
   DIDescriptor TyContext =  findRegion(TYPE_CONTEXT(type));
 
   // Check if this type is created while creating context information 
   // descriptor. 
   std::map<tree_node *, WeakVH >::iterator I = TypeCache.find(type);
   if (I != TypeCache.end())
-    if (MDNode *TN = dyn_cast_or_null<MDNode>(&*I->second))
+    if (MDNode *TN = dyn_cast_or_null<MDNode>(I->second))
       return DIType(TN);
   
   // forward declaration, 
@@ -1016,7 +1016,7 @@ DIType DebugInfo::createStructType(tree type) {
                                        getOrCreateFile(Loc.file), 
                                        Loc.line, 
                                        0, 0, 0,
-                                       SFlags | llvm::DIDescriptor::FlagFwdDecl,
+                                       SFlags | llvm::DIType::FlagFwdDecl,
                                        llvm::DIType(), llvm::DIArray(),
                                        RunTimeLang);
     return FwdDecl;
@@ -1045,13 +1045,13 @@ DIType DebugInfo::createStructType(tree type) {
       DIType BaseClass = getOrCreateType(BInfoType);
       unsigned BFlags = 0;
       if (BINFO_VIRTUAL_P (BInfo))
-        BFlags = llvm::DIDescriptor::FlagVirtual;
+        BFlags = llvm::DIType::FlagVirtual;
       if (accesses) {
         tree access = VEC_index (tree, accesses, i);
         if (access == access_protected_node)
-          BFlags |= llvm::DIDescriptor::FlagProtected;
+          BFlags |= llvm::DIType::FlagProtected;
         else if (access == access_private_node)
-          BFlags |= llvm::DIDescriptor::FlagPrivate;
+          BFlags |= llvm::DIType::FlagPrivate;
       }
 
       // Check for zero BINFO_OFFSET. 
@@ -1065,8 +1065,9 @@ DIType DebugInfo::createStructType(tree type) {
       DIType DTy = 
         DebugFactory.CreateDerivedType(DW_TAG_inheritance, 
                                        findRegion(TYPE_CONTEXT(type)), StringRef(),
-                                       getOrCreateFile(Loc.file), 0, 0, 0,
-                                       Offset, BFlags, BaseClass);
+                                       llvm::DIFile(), 0,0,0, 
+                                       Offset,
+                                       BFlags, BaseClass);
       EltTys.push_back(DTy);
     }
   }
@@ -1102,9 +1103,9 @@ DIType DebugInfo::createStructType(tree type) {
     StringRef MemberName = GetNodeName(Member);
     unsigned MFlags = 0;
     if (TREE_PROTECTED(Member))
-      MFlags = llvm::DIDescriptor::FlagProtected;
+      MFlags = llvm::DIType::FlagProtected;
     else if (TREE_PRIVATE(Member))
-      MFlags = llvm::DIDescriptor::FlagPrivate;
+      MFlags = llvm::DIType::FlagPrivate;
     
     DIType DTy =
       DebugFactory.CreateDerivedType(DW_TAG_member, 
@@ -1145,14 +1146,6 @@ DIType DebugInfo::createStructType(tree type) {
         Virtuality = dwarf::DW_VIRTUALITY_virtual;
         ContainingType = getOrCreateType(DECL_CONTEXT(Member));
       }
-      unsigned Flags = 0;
-      if (DECL_ARTIFICIAL (Member))
-        Flags |= llvm::DIDescriptor::FlagArtificial;
-      if (TREE_PROTECTED(Member))
-        Flags = llvm::DIDescriptor::FlagProtected;
-      else if (TREE_PRIVATE(Member))
-        Flags = llvm::DIDescriptor::FlagPrivate;
-      
       DISubprogram SP = 
         DebugFactory.CreateSubprogram(findRegion(DECL_CONTEXT(Member)), 
                                       MemberName, MemberName,
@@ -1160,7 +1153,7 @@ DIType DebugInfo::createStructType(tree type) {
                                       getOrCreateFile(MemLoc.file),
                                       MemLoc.line, SPTy, false, false,
                                       Virtuality, VIndex, ContainingType,
-                                      Flags, optimize);
+                                      DECL_ARTIFICIAL (Member), optimize);
       EltTys.push_back(SP);
       SPCache[Member] = WeakVH(SP);
     }

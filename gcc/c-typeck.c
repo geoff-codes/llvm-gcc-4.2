@@ -2132,10 +2132,7 @@ build_array_ref (tree array, tree index)
        * and it provides it with more information for optimization.
        */
       {
-        /* LLVM LOCAL begin 8361341 */
-        tree orig_ty = TREE_TYPE(TREE_TYPE(ar));
-        tree ty = orig_ty;
-        /* LLVM LOCAL end 8361341 */
+        tree ty = TREE_TYPE(TREE_TYPE(ar));
         if (TREE_CODE(ty) == RECORD_TYPE || TREE_CODE(ty) == UNION_TYPE
             || TREE_CODE(ty) == QUAL_UNION_TYPE)
           ty = TYPE_MAIN_VARIANT (ty);
@@ -2152,10 +2149,8 @@ build_array_ref (tree array, tree index)
         /* Mirror logic from build_indirect_ref to set TREE_THIS_VOLATILE and
          * other flags.
          */
-        /* LLVM LOCAL begin 8361341 */
-        TREE_READONLY (ar) = TYPE_READONLY (orig_ty);
-        TREE_THIS_VOLATILE(ar) = TYPE_VOLATILE(orig_ty);
-        /* LLVM LOCAL end 8361341 */
+        TREE_READONLY (ar) = TYPE_READONLY (TREE_TYPE (ar));
+        TREE_THIS_VOLATILE(ar) = TYPE_VOLATILE(TREE_TYPE (ar));
         TREE_SIDE_EFFECTS (ar)
           = TREE_THIS_VOLATILE (ar) || TREE_SIDE_EFFECTS (array) ||
             TREE_SIDE_EFFECTS (index);
